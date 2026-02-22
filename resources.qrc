@@ -1,0 +1,8 @@
+# Conteúdo do arquivo resources.qrc
+"""
+<RCC>
+    <qresource prefix="/plugins/inde_servicos_br">
+        <file>icon.png</file>
+    </qresource>
+</RCC>
+"""
