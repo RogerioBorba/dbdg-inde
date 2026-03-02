@@ -5,7 +5,7 @@ qgisMinimumVersion=3.0
 description=Plugin para acesso aos geoserviços da INDE Brasil
 version=0.0.1
 author=Rogério Borba
-email=rogerio.borba@ibge.gov.br
+email=dbdg@inde.gov.br
 about=Plugin para acesso aos geoserviços da INDE Brasil. Permite acessar facilmente os serviços WMS, WFS e WCS das instituições participantes do DBDG (Diretório Brasileiro de Dados Geoespaciais) da INDE.
 
 tracker=https://github.com/yourusername/IndeServicosBR/issues

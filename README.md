@@ -50,10 +50,14 @@ Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICE
 
 ## Autores
 
-- Rogério Borba (rogerio.borba@ibge.gov.br)
+- Rogério Borba (dbdg@inde.gov.br)
 
 ## Agradecimentos
 
 - INDE Brasil por disponibilizar os serviços
 - Comunidade QGIS por fornecer a plataforma
 - Todos os contribuidores do projeto
+
+## Disclaimer
+
+Este repositório, dbdg-inde, é disponibilizado sem garantias de qualquer natureza, expressas ou implícitas. O conteúdo, código-fonte, documentação e quaisquer outros materiais aqui presentes são fornecidos "como estão", sem responsabilidade por parte do autor ou colaboradores por eventuais danos, perdas ou problemas decorrentes do seu uso.

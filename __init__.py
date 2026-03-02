@@ -1,26 +1,17 @@
-# Conteúdo do arquivo __init__.py
+# -*- coding: utf-8 -*-
 """
-/***************************************************************************
- IndeServicosBR
-                                 A QGIS plugin
- Plugin para acesso aos geoserviços da INDE Brasil
-                             -------------------
-        begin                : 2025-03-18
-        copyright            : (C) 2025
-        authors              : Rogério Borba
-        email                : rogerio.borba@ibge.gov.br
-        organization         : IBGE
- ***************************************************************************/
+Initialization file for the dbdg-inde QGIS plugin.
+This module exposes the required classFactory entry point that QGIS
+uses to instantiate the plugin.
 """
 
+
 def classFactory(iface):
-    """
-    Carrega a classe principal do plugin IndeServicosBR.
-    
-    :param iface: Interface QGIS
+    """Load DbdgIndePlugin class.
+
+    :param iface: A QGIS interface instance.
     :type iface: QgsInterface
-    :return: IndeServicosBR
-    :rtype: IndeServicosBR
+    :returns: An instance of the plugin class
     """
-    from .inde_servicos_br import IndeServicosBR
-    return IndeServicosBR(iface)
+    from .dbdg_inde_plugin import DbdgIndePlugin
+    return DbdgIndePlugin(iface)
