@@ -30,6 +30,9 @@ class WmsServiceHandler(ServiceHandler):
             if name is not None and name.text:
                 layer_title = title.text if title is not None else name.text
                 metadata_url = self._extract_metadata_url(layer, namespaces)
+                # ensure CSW-style URLs include an outputSchema where appropriate
+                from ..metadata_viewer import _prepare_metadata_url
+                metadata_url = _prepare_metadata_url(metadata_url) if metadata_url else metadata_url
                 layers.append((name.text, layer_title, metadata_url))
         return layers
 
@@ -43,12 +46,40 @@ class WmsServiceHandler(ServiceHandler):
 
     @staticmethod
     def _extract_metadata_url(layer, namespaces):
-        metadata_url = layer.find("wms:MetadataURL/wms:OnlineResource", namespaces)
-        if metadata_url is None:
-            return None
+        candidates = []
+        metadata_nodes = layer.findall("wms:MetadataURL", namespaces)
 
-        for key in ("{http://www.w3.org/1999/xlink}href", "href"):
-            value = metadata_url.get(key)
-            if value:
-                return value
+        for metadata_node in metadata_nodes:
+            online_resource = metadata_node.find("wms:OnlineResource", namespaces)
+            if online_resource is None:
+                continue
+
+            href = None
+            for key in ("{http://www.w3.org/1999/xlink}href", "href"):
+                value = online_resource.get(key)
+                if value:
+                    href = value
+                    break
+            if not href:
+                continue
+
+            format_node = metadata_node.find("wms:Format", namespaces)
+            format_value = (format_node.text or "").strip().lower() if format_node is not None else ""
+
+            from ..metadata_viewer import _prepare_metadata_url
+
+            normalized = _prepare_metadata_url(href)
+            lowered = normalized.lower()
+            score = 0
+            if "xml" in format_value:
+                score += 3
+            if "getrecordbyid" in lowered:
+                score += 2
+            if "service=csw" in lowered:
+                score += 1
+            candidates.append((score, normalized))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            return candidates[0][1]
         return None

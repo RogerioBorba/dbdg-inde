@@ -59,6 +59,10 @@ class WfsServiceHandler(ServiceHandler):
                 if name is not None and name.text:
                     layer_title = title.text if title is not None else name.text
                     metadata_url = self._extract_feature_metadata_url(feature_type, namespace)
+                    # normalise the URL immediately so downstream code doesn't need
+                    # to remember to fix it again
+                    from ..metadata_viewer import _prepare_metadata_url
+                    metadata_url = _prepare_metadata_url(metadata_url) if metadata_url else metadata_url
                     feature_types.append((name.text, layer_title, metadata_url or default_metadata_url))
             if feature_types:
                 return feature_types
@@ -69,6 +73,8 @@ class WfsServiceHandler(ServiceHandler):
             if name is not None and name.text:
                 layer_title = title.text if title is not None else name.text
                 metadata_url = self._extract_feature_metadata_url(feature_type)
+                from ..metadata_viewer import _prepare_metadata_url
+                metadata_url = _prepare_metadata_url(metadata_url) if metadata_url else metadata_url
                 feature_types.append((name.text, layer_title, metadata_url or default_metadata_url))
         return feature_types
 

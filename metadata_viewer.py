@@ -1,10 +1,15 @@
 import html
+import re
 import ssl
+import urllib.parse
 import urllib.request
 
 from qgis.PyQt.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayout
 
 from .service_handlers.base import parse_xml_safe
+
+ISO19139_OUTPUT_SCHEMA = "http://www.isotc211.org/2005/gmd"
+ISO19115_3_OUTPUT_SCHEMA = "http://standards.iso.org/iso/19115/-3/mdb/2.0"
 
 
 def _first_text(root, paths):
@@ -100,18 +105,107 @@ def _extract_links(root, limit=8):
         if marker in seen:
             continue
         seen.add(marker)
-        links.append({"url": url, "name": name or "Link"})
+        links.append({"url": url, "name": name or "Recurso"})
         if len(links) >= limit:
             break
     return links
 
 
+
+
+def _prepare_metadata_url(url, preferred_schema=ISO19139_OUTPUT_SCHEMA):
+    """Return a possibly-modified metadata URL.
+
+    Many CSW servers require the ``outputSchema`` parameter when performing a
+    GetRecordById request so that the returned document is in the ISO/19139
+    (``http://www.isotc211.org/2005/gmd``) schema.  The metadata URLs exposed
+    under ``MetadataURL`` tags in WMS/WFS capabilities sometimes omit this
+    parameter.  As a result the raw response may be delivered in an unexpected
+    format (HTML, custom XML) and the plugin fails to recognise or display the
+    metadata.
+
+    We attempt to detect cases where the URL already contains a CSW
+    ``GetRecord*`` request and no ``outputSchema`` parameter; when found we add
+    the ISO schema value before the request is sent.  This matches the change
+    requested by users: "para os casos que a tag MetadataURL esteja
+    preenchida ... no GetCapabilities colocar o outputSchema da requisição
+    GetRecordByID com o valor de http://www.isotc211.org/2005/gmd sempre que
+    possível antes de fazer a requisição".
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+
+        # GeoNetwork UI URL -> CSW GetRecordById endpoint.
+        # Example:
+        # .../catalog.search#/metadata/<uuid>
+        fragment = parsed.fragment or ""
+        match = re.search(
+            r"(?:^|/)metadata/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+            fragment,
+        )
+        if match:
+            metadata_id = match.group(1)
+            csw_path = re.sub(r"/catalog\.search/?$", "/csw", parsed.path)
+            if csw_path == parsed.path:
+                csw_path = parsed.path.rstrip("/") + "/csw"
+            query = {
+                "service": ["CSW"],
+                "version": ["2.0.2"],
+                "request": ["GetRecordById"],
+                "id": [metadata_id],
+                "elementSetName": ["full"],
+                "outputSchema": [preferred_schema],
+            }
+            return urllib.parse.urlunparse(
+                parsed._replace(path=csw_path, query=urllib.parse.urlencode(query, doseq=True), fragment="")
+            )
+
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        service = query.get("service", [""])[0].lower()
+        request = query.get("request", [""])[0].lower()
+
+        # decide whether this looks like a CSW GetRecordById-type request
+        needs_schema = False
+        if "csw" in service or "csw" in parsed.netloc.lower():
+            if "getrecord" in request or "getrecord" in url.lower():
+                needs_schema = True
+        if needs_schema:
+            output_schema_key = next((k for k in query if k.lower() == "outputschema"), None)
+            if output_schema_key is None:
+                query["outputSchema"] = [preferred_schema]
+            else:
+                query[output_schema_key] = [preferred_schema]
+            new_q = urllib.parse.urlencode(query, doseq=True)
+            parsed = parsed._replace(query=new_q)
+            return urllib.parse.urlunparse(parsed)
+    except Exception:
+        # on any parsing error just return original URL
+        pass
+    return url
+
+
 def fetch_metadata_summary(metadata_url, timeout=30):
     context = ssl.create_default_context()
-    with urllib.request.urlopen(metadata_url, context=context, timeout=timeout) as response:
-        xml_data = response.read()
+    candidate_urls = []
+    for schema in (ISO19139_OUTPUT_SCHEMA, ISO19115_3_OUTPUT_SCHEMA):
+        candidate = _prepare_metadata_url(metadata_url, preferred_schema=schema)
+        if candidate not in candidate_urls:
+            candidate_urls.append(candidate)
 
-    root = parse_xml_safe(xml_data)
+    root = None
+    last_error = None
+    for candidate_url in candidate_urls:
+        try:
+            with urllib.request.urlopen(candidate_url, context=context, timeout=timeout) as response:
+                xml_data = response.read()
+            root = parse_xml_safe(xml_data)
+            metadata_url = candidate_url
+            break
+        except Exception as error:
+            last_error = error
+
+    if root is None:
+        raise last_error if last_error else Exception("Failed to load metadata.")
 
     summary = {
         "title": _first_text(
@@ -184,75 +278,75 @@ def fetch_metadata_summary(metadata_url, timeout=30):
 
 def _list_html(items):
     if not items:
-        return "<p><i>Not informed.</i></p>"
+        return "<p><i>Não informado.</i></p>"
     return "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in items) + "</ul>"
 
 
 def _dates_html(items):
     if not items:
-        return "<p><i>Not informed.</i></p>"
+        return "<p><i>Não informado.</i></p>"
     lines = []
     for item in items:
         date_value = html.escape(item.get("value", ""))
-        date_type = html.escape(item.get("type") or "date")
+        date_type = html.escape(item.get("type") or "data")
         lines.append(f"<li><b>{date_type}</b>: {date_value}</li>")
     return "<ul>" + "".join(lines) + "</ul>"
 
 
 def _links_html(items):
     if not items:
-        return "<p><i>Not informed.</i></p>"
+        return "<p><i>Não informado.</i></p>"
     lines = []
     for item in items:
         url = html.escape(item.get("url", ""))
-        label = html.escape(item.get("name", "Link"))
+        label = html.escape(item.get("name", "Recurso"))
         lines.append(f'<li><a href="{url}">{label}</a><br/><small>{url}</small></li>')
     return "<ul>" + "".join(lines) + "</ul>"
 
 
 def build_metadata_html(summary, metadata_url):
-    title = html.escape(summary.get("title") or "Metadata")
-    abstract = html.escape(summary.get("abstract") or "Not informed.")
-    lineage = html.escape(summary.get("lineage") or "Not informed.")
+    title = html.escape(summary.get("title") or "Metadados")
+    abstract = html.escape(summary.get("abstract") or "Não informado.")
+    lineage = html.escape(summary.get("lineage") or "Não informado.")
 
     bbox = summary.get("bbox") or {}
     has_bbox = any(bbox.get(key) for key in ("west", "east", "south", "north"))
     if has_bbox:
         bbox_html = (
             "<p>"
-            f"<b>West</b>: {html.escape(str(bbox.get('west') or '-'))}<br/>"
-            f"<b>East</b>: {html.escape(str(bbox.get('east') or '-'))}<br/>"
-            f"<b>South</b>: {html.escape(str(bbox.get('south') or '-'))}<br/>"
-            f"<b>North</b>: {html.escape(str(bbox.get('north') or '-'))}"
+            f"<b>Oeste</b>: {html.escape(str(bbox.get('west') or '-'))}<br/>"
+            f"<b>Leste</b>: {html.escape(str(bbox.get('east') or '-'))}<br/>"
+            f"<b>Sul</b>: {html.escape(str(bbox.get('south') or '-'))}<br/>"
+            f"<b>Norte</b>: {html.escape(str(bbox.get('north') or '-'))}"
             "</p>"
         )
     else:
-        bbox_html = "<p><i>Not informed.</i></p>"
+        bbox_html = "<p><i>Não informado.</i></p>"
 
     source_url = html.escape(metadata_url)
     return f"""
     <html>
       <body style="font-family: Segoe UI, Arial, sans-serif; font-size: 10pt;">
         <h2>{title}</h2>
-        <p><b>Source XML:</b> <a href="{source_url}">{source_url}</a></p>
-        <h3>Abstract</h3>
+        <p><b>Fonte XML:</b> <a href="{source_url}">{source_url}</a></p>
+        <h3>Resumo</h3>
         <p>{abstract}</p>
-        <h3>Keywords</h3>
+        <h3>Palavras-chave</h3>
         {_list_html(summary.get("keywords") or [])}
-        <h3>Contacts</h3>
-        <p><b>Organizations</b></p>
+        <h3>Contatos</h3>
+        <p><b>Organizações</b></p>
         {_list_html(summary.get("organisations") or [])}
-        <p><b>Emails</b></p>
+        <p><b>E-mails</b></p>
         {_list_html(summary.get("emails") or [])}
-        <h3>Reference dates</h3>
+        <h3>Datas de referência</h3>
         {_dates_html(summary.get("dates") or [])}
-        <h3>Geographic extent (BBOX)</h3>
+        <h3>Extensão geográfica (BBOX)</h3>
         {bbox_html}
-        <h3>Constraints</h3>
+        <h3>Restrições</h3>
         {_list_html(summary.get("constraints") or [])}
-        <h3>Lineage</h3>
+        <h3>Linhagem</h3>
         <p>{lineage}</p>
-        <h3>Online resources</h3>
+        <h3>Recursos online</h3>
         {_links_html(summary.get("links") or [])}
       </body>
     </html>
@@ -262,7 +356,7 @@ def build_metadata_html(summary, metadata_url):
 class MetadataSummaryDialog(QDialog):
     def __init__(self, metadata_url, summary, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Layer metadata")
+        self.setWindowTitle("Metadados da camada")
         self.resize(860, 620)
 
         browser = QTextBrowser(self)

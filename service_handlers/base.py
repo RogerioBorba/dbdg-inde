@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
+import html.entities
 import re
 import xml.etree.ElementTree as ET
 
 
 _NUMERIC_CHAR_REF_RE = re.compile(rb"&#(x[0-9A-Fa-f]+|\d+);")
 _INVALID_CONTROL_BYTES_RE = re.compile(rb"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+_NAMED_ENTITY_RE = re.compile(r"&([A-Za-z][A-Za-z0-9]+);")
+_XML_TOKEN_RE = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|</?[^>]+?>", re.DOTALL)
 
 
 def _is_valid_xml_codepoint(codepoint):
@@ -32,6 +35,72 @@ def _strip_invalid_numeric_references(xml_data):
     return _NUMERIC_CHAR_REF_RE.sub(replace, xml_data)
 
 
+def _decode_named_entities(xml_data):
+    """Convert HTML named entities (e.g. &nbsp;) into Unicode characters."""
+    text = xml_data.decode("utf-8", errors="replace")
+    xml_builtin = {"amp", "lt", "gt", "quot", "apos"}
+
+    def replace(match):
+        name = match.group(1)
+        if name in xml_builtin:
+            return match.group(0)
+        codepoint = html.entities.name2codepoint.get(name)
+        if codepoint is None:
+            return " "
+        return chr(codepoint) if _is_valid_xml_codepoint(codepoint) else ""
+
+    return _NAMED_ENTITY_RE.sub(replace, text).encode("utf-8")
+
+
+def _repair_mismatched_tags(xml_data):
+    """Best-effort structural repair for malformed XML tag nesting."""
+    text = xml_data.decode("utf-8", errors="replace")
+    output = []
+    stack = []
+    last_index = 0
+
+    for match in _XML_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        output.append(text[last_index : match.start()])
+        last_index = match.end()
+
+        if token.startswith("<!--") or token.startswith("<![CDATA[") or token.startswith("<?"):
+            output.append(token)
+            continue
+
+        if token.startswith("</"):
+            tag_name = token[2:-1].strip().split()[0] if token.endswith(">") else ""
+            if not tag_name:
+                continue
+            if tag_name in stack:
+                while stack and stack[-1] != tag_name:
+                    output.append(f"</{stack.pop()}>")
+                if stack and stack[-1] == tag_name:
+                    stack.pop()
+                    output.append(f"</{tag_name}>")
+            continue
+
+        if token.startswith("<!"):
+            output.append(token)
+            continue
+
+        tag_body = token[1:-1].strip()
+        if not tag_body:
+            continue
+        tag_name = tag_body.split()[0].rstrip("/")
+        if not tag_name:
+            continue
+        output.append(token)
+        if not token.endswith("/>"):
+            stack.append(tag_name)
+
+    output.append(text[last_index:])
+    while stack:
+        output.append(f"</{stack.pop()}>")
+
+    return "".join(output).encode("utf-8")
+
+
 def parse_xml_safe(xml_data):
     """Parse XML bytes, trying a sanitized fallback for malformed capabilities."""
     try:
@@ -39,7 +108,12 @@ def parse_xml_safe(xml_data):
     except ET.ParseError:
         cleaned = _strip_invalid_numeric_references(xml_data)
         cleaned = _INVALID_CONTROL_BYTES_RE.sub(b"", cleaned)
-        return ET.fromstring(cleaned)
+        cleaned = _decode_named_entities(cleaned)
+        try:
+            return ET.fromstring(cleaned)
+        except ET.ParseError:
+            repaired = _repair_mismatched_tags(cleaned)
+            return ET.fromstring(repaired)
 
 
 class ServiceHandler(ABC):
