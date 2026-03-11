@@ -30,7 +30,7 @@ from .service_handlers import build_service_handlers
 class ServiceLoaderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("INDE OGC service loader")
+        self.setWindowTitle("Carregador de servicos OGC da INDE")
         self.resize(800, 500)
 
         self.handlers = build_service_handlers()
@@ -44,19 +44,25 @@ class ServiceLoaderDialog(QDialog):
         self.layer_filter_input = QLineEdit()
         self.layer_list = QListWidget()
         self.format_combo = QComboBox()
-        self.format_combo.addItems(["GML (default)", "Shapefile (zip)", "JSON"])
-        self.load_button = QPushButton("Add layer to project")
-        self.metadata_button = QPushButton("View metadata")
+        self.format_combo.addItems(["GML (padrao)", "Shapefile (zip)", "JSON"])
+        self.wfs_startindex_input = QLineEdit()
+        self.wfs_count_input = QLineEdit()
+        self.load_button = QPushButton("Adicionar camada ao projeto")
+        self.metadata_button = QPushButton("Ver metadados")
         self.load_button.setEnabled(False)
         self.metadata_button.setEnabled(False)
+        self.wfs_startindex_input.setEnabled(False)
+        self.wfs_count_input.setEnabled(False)
 
         self._build_ui()
         self._wire_events()
         self.load_catalog()
 
     def _build_ui(self):
-        self.filter_input.setPlaceholderText("Filter institutions by name...")
-        self.layer_filter_input.setPlaceholderText("Filter layers by name...")
+        self.filter_input.setPlaceholderText("Filtrar instituicoes por nome...")
+        self.layer_filter_input.setPlaceholderText("Filtrar camadas por nome...")
+        self.wfs_startindex_input.setPlaceholderText("Ex.: 0")
+        self.wfs_count_input.setPlaceholderText("Ex.: 100")
 
         for service_type in ("wms", "wfs", "wcs"):
             handler = self.handlers[service_type]
@@ -70,16 +76,20 @@ class ServiceLoaderDialog(QDialog):
             self.tabs.addTab(container, handler.tab_name)
 
         left_layout = QVBoxLayout()
-        left_layout.addWidget(QLabel("Institutions"))
+        left_layout.addWidget(QLabel("Instituicoes"))
         left_layout.addWidget(self.filter_input)
         left_layout.addWidget(self.tabs)
 
         right_layout = QVBoxLayout()
-        right_layout.addWidget(QLabel("Available layers"))
+        right_layout.addWidget(QLabel("Camadas disponiveis"))
         right_layout.addWidget(self.layer_filter_input)
         right_layout.addWidget(self.layer_list)
-        right_layout.addWidget(QLabel("Format (WFS only):"))
+        right_layout.addWidget(QLabel("Formato (apenas WFS):"))
         right_layout.addWidget(self.format_combo)
+        right_layout.addWidget(QLabel("STARTINDEX (WFS 2.0 - opcional):"))
+        right_layout.addWidget(self.wfs_startindex_input)
+        right_layout.addWidget(QLabel("COUNT (WFS 2.0 - opcional):"))
+        right_layout.addWidget(self.wfs_count_input)
         right_layout.addWidget(self.metadata_button)
         right_layout.addWidget(self.load_button)
 
@@ -104,7 +114,7 @@ class ServiceLoaderDialog(QDialog):
         try:
             self.catalog = fetch_catalog()
         except Exception as error:
-            QMessageBox.critical(self, "Error", f"Cannot fetch catalog: {error}")
+            QMessageBox.critical(self, "Erro", f"Nao foi possivel carregar o catalogo: {error}")
             return
 
         self.apply_catalog_filter()
@@ -139,6 +149,8 @@ class ServiceLoaderDialog(QDialog):
         self.load_button.setEnabled(False)
         self.metadata_button.setEnabled(False)
         self.format_combo.setEnabled(service_type == "wfs")
+        self.wfs_startindex_input.setEnabled(service_type == "wfs")
+        self.wfs_count_input.setEnabled(service_type == "wfs")
 
         selected_service = self.service_widgets[service_type].currentItem()
         if not selected_service:
@@ -167,7 +179,7 @@ class ServiceLoaderDialog(QDialog):
             progress.setValue(70)
             QApplication.processEvents()
         except Exception as error:
-            QMessageBox.warning(self, "Error", f"Failed to parse capabilities: {error}")
+            QMessageBox.warning(self, "Erro", f"Falha ao processar o capabilities: {error}")
             layers = []
         finally:
             progress.setValue(100)
@@ -216,37 +228,74 @@ class ServiceLoaderDialog(QDialog):
 
         handler = self.handlers.get(service_type)
         if not handler:
-            QMessageBox.warning(self, "Error", f"Unsupported service type: {service_type}")
+            QMessageBox.warning(self, "Erro", f"Tipo de servico nao suportado: {service_type}")
             return
+
+        loading_message = "Carregando camada..."
+        if service_type == "wcs":
+            loading_message = "Carregando coverage WCS. Isso pode levar alguns segundos..."
+        elif service_type == "wfs":
+            loading_message = "Carregando camada WFS. Isso pode levar alguns segundos..."
+        elif service_type == "wms":
+            loading_message = "Carregando camada WMS. Isso pode levar alguns segundos..."
+
+        startindex = self._parse_optional_int(
+            self.wfs_startindex_input.text(),
+            "STARTINDEX",
+            minimum=0,
+        )
+        count = self._parse_optional_int(
+            self.wfs_count_input.text(),
+            "COUNT",
+            minimum=1,
+        )
+        if startindex is None and self.wfs_startindex_input.text().strip():
+            return
+        if count is None and self.wfs_count_input.text().strip():
+            return
+
+        progress = QProgressDialog(loading_message, "", 0, 0, self)
+        progress.setWindowTitle("Aguarde")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
 
         try:
             layer = handler.create_layer(
                 entry=entry,
                 layer_name=layer_name,
-                options={"format_text": self.format_combo.currentText()},
+                options={
+                    "format_text": self.format_combo.currentText(),
+                    "startindex": startindex,
+                    "count": count,
+                },
                 parent=self,
             )
             if layer and layer.isValid():
                 QgsProject.instance().addMapLayer(layer)
-                QMessageBox.information(self, "Success", f"Layer {layer_name} added")
+                QMessageBox.information(self, "Sucesso", f"Camada {layer_name} adicionada")
             else:
                 error_message = self._extract_error_message(layer)
-                QMessageBox.warning(self, "Error", f"Failed to create layer: {error_message}")
+                QMessageBox.warning(self, "Erro", f"Falha ao criar a camada: {error_message}")
         except Exception as error:
-            QMessageBox.critical(self, "Error", f"Exception: {error}")
+            QMessageBox.critical(self, "Erro", f"Excecao: {error}")
+        finally:
+            progress.close()
 
     def open_metadata(self):
         metadata_url = self._get_selected_metadata_url()
         if not metadata_url:
             QMessageBox.information(
                 self,
-                "Metadata",
-                "No metadata URL is available for this layer.",
+                "Metadados",
+                "Nao ha URL de metadados disponivel para esta camada.",
             )
             return
 
-        progress = QProgressDialog("Loading metadata...", "", 0, 0, self)
-        progress.setWindowTitle("Please wait")
+        progress = QProgressDialog("Carregando metadados...", "", 0, 0, self)
+        progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
         progress.setWindowModality(Qt.WindowModal)
@@ -258,7 +307,7 @@ class ServiceLoaderDialog(QDialog):
             dialog = MetadataSummaryDialog(metadata_url=metadata_url, summary=summary, parent=self)
             dialog.exec_()
         except Exception as error:
-            QMessageBox.warning(self, "Error", f"Failed to load metadata: {error}")
+            QMessageBox.warning(self, "Erro", f"Falha ao carregar metadados: {error}")
         finally:
             progress.close()
 
@@ -295,7 +344,7 @@ class ServiceLoaderDialog(QDialog):
 
     @staticmethod
     def _extract_error_message(layer):
-        error_message = "Layer is invalid."
+        error_message = "Camada invalida."
         if not layer:
             return error_message
 
@@ -308,3 +357,17 @@ class ServiceLoaderDialog(QDialog):
             else:
                 error_message = str(error_obj)
         return error_message
+
+    def _parse_optional_int(self, raw_value, label, minimum=0):
+        value = (raw_value or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            QMessageBox.warning(self, "Erro", f"{label} deve ser um numero inteiro.")
+            return None
+        if parsed < minimum:
+            QMessageBox.warning(self, "Erro", f"{label} deve ser maior ou igual a {minimum}.")
+            return None
+        return parsed

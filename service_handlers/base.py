@@ -131,3 +131,44 @@ class ServiceHandler(ABC):
     @abstractmethod
     def create_layer(self, entry, layer_name, options=None, parent=None):
         """Build and return a QGIS layer for the given service entry."""
+
+
+def _find_text_in_children(element, tag_names):
+    """Return first non-empty child text for any local tag name in tag_names."""
+    tag_names = set(tag_names)
+    for child in list(element):
+        local_name = child.tag.split("}", 1)[-1]
+        if local_name in tag_names and child.text and child.text.strip():
+            return child.text.strip()
+    return None
+
+
+def extract_wcs_coverages(root):
+    """
+    Extract coverage tuples from WCS GetCapabilities XML across common versions.
+
+    Returns a list of (coverage_name, coverage_title).
+    """
+    coverage_nodes = root.findall(".//{*}CoverageSummary")
+    if not coverage_nodes:
+        coverage_nodes = root.findall(".//{*}CoverageOfferingBrief")
+
+    coverages = []
+    seen = set()
+
+    for coverage in coverage_nodes:
+        coverage_name = _find_text_in_children(
+            coverage,
+            {"CoverageId", "Identifier", "name", "Name"},
+        )
+        if not coverage_name:
+            continue
+
+        coverage_title = _find_text_in_children(coverage, {"Title", "label", "Label"})
+        coverage_title = coverage_title or coverage_name
+
+        if coverage_name not in seen:
+            seen.add(coverage_name)
+            coverages.append((coverage_name, coverage_title))
+
+    return coverages

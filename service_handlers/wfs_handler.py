@@ -21,6 +21,7 @@ class WfsServiceHandler(ServiceHandler):
 
     FORMAT_MAP = {
         "GML (default)": "application/gml+xml",
+        "GML (padrao)": "application/gml+xml",
         "Shapefile (zip)": "shape-zip",
         "JSON": "application/json",
     }
@@ -80,18 +81,26 @@ class WfsServiceHandler(ServiceHandler):
 
     def create_layer(self, entry, layer_name, options=None, parent=None):
         service_url = entry.get("url")
-        selected_format = (options or {}).get("format_text", "GML (default)")
+        selected_format = (options or {}).get("format_text", "GML (padrao)")
+        startindex = (options or {}).get("startindex")
+        count = (options or {}).get("count")
         output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
 
         progress = QMessageBox(parent)
         progress.setText("Downloading WFS data...")
         progress.show()
         QApplication.processEvents()
-        temp_file = self._download_wfs_file(service_url, layer_name, output_format)
+        temp_file = self._download_wfs_file(
+            service_url,
+            layer_name,
+            output_format,
+            startindex=startindex,
+            count=count,
+        )
         progress.close()
 
         if not temp_file:
-            raise Exception("Failed to download WFS data from server.")
+            raise Exception("Falha ao baixar dados WFS do servidor.")
 
         if output_format == "shape-zip":
             return self._load_shapefile(temp_file, layer_name, parent)
@@ -99,7 +108,15 @@ class WfsServiceHandler(ServiceHandler):
             return self._load_json(temp_file, layer_name)
         return self._load_gml(temp_file, layer_name)
 
-    def _download_wfs_file(self, url, layer_name, output_format, timeout=60):
+    def _download_wfs_file(
+        self,
+        url,
+        layer_name,
+        output_format,
+        startindex=None,
+        count=None,
+        timeout=60,
+    ):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -110,6 +127,10 @@ class WfsServiceHandler(ServiceHandler):
             "request": "GetFeature",
             "typeNames": layer_name,
         }
+        if startindex is not None:
+            base_params["STARTINDEX"] = startindex
+        if count is not None:
+            base_params["COUNT"] = count
 
         if "gml" in output_format.lower():
             output_formats = [
@@ -237,22 +258,22 @@ class WfsServiceHandler(ServiceHandler):
                     shapefile_path = os.path.join(os.path.dirname(temp_file), filename)
                     break
             if not shapefile_path:
-                raise Exception("No .shp file found in downloaded zip.")
+                raise Exception("Nenhum arquivo .shp encontrado no zip baixado.")
 
             layer = QgsVectorLayer(shapefile_path, layer_name, "ogr")
             if layer.isValid() and self._should_ask_coordinate_flip(layer):
                 answer = QMessageBox.question(
                     parent,
-                    "WFS Coordinate Order",
-                    "It looks like the loaded WFS layer coordinates may be inverted "
-                    "(latitude/longitude).\nDo you want to flip them?",
+                    "Ordem de coordenadas WFS",
+                    "Parece que as coordenadas da camada WFS podem estar invertidas "
+                    "(latitude/longitude).\nDeseja inverter?",
                     QMessageBox.Yes | QMessageBox.No,
                 )
                 if answer == QMessageBox.Yes:
                     layer = self._flip_layer_coordinates(layer, layer_name)
             return layer
         except Exception as error:
-            raise Exception(f"Failed to extract shapefile: {error}")
+            raise Exception(f"Falha ao extrair shapefile: {error}")
 
     @staticmethod
     def _should_ask_coordinate_flip(layer):
