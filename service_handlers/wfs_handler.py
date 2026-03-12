@@ -85,10 +85,6 @@ class WfsServiceHandler(ServiceHandler):
         startindex = (options or {}).get("startindex")
         count = (options or {}).get("count")
         output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
-
-        progress = QMessageBox(parent)
-        progress.setText("Downloading WFS data...")
-        progress.show()
         QApplication.processEvents()
         temp_file = self._download_wfs_file(
             service_url,
@@ -97,7 +93,6 @@ class WfsServiceHandler(ServiceHandler):
             startindex=startindex,
             count=count,
         )
-        progress.close()
 
         if not temp_file:
             raise Exception("Falha ao baixar dados WFS do servidor.")

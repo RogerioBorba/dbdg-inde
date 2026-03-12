@@ -26,9 +26,9 @@ class DbdgIndePlugin:
         """Create the menu entries and toolbar icons inside QGIS."""
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
         self.action = QAction(QIcon(icon_path), self.tr("dbdg-inde"), self.iface.mainWindow())
+        self.action.setToolTip("serviços DBDG/INDE")
+        self.action.setStatusTip("serviços DBDG/INDE")
         self.action.triggered.connect(self.run)
-        self.iface.addToolBarIcon(self.action)
-        self.iface.addPluginToMenu(self.tr("&dbdg-inde"), self.action)
         self.toolbar = self.iface.addToolBar("dbdg-inde")
         self.toolbar.setObjectName('IndeBrasilToolbar')
         self.toolbar.addAction(self.action)
@@ -37,8 +37,7 @@ class DbdgIndePlugin:
     def unload(self):
         """Removes the plugin menu item and icon."""
         if self.action:
-            self.iface.removePluginMenu(self.tr("&dbdg-inde"), self.action)
-            self.iface.removeToolBarIcon(self.action)
+            self.toolbar.removeAction(self.action)
 
     def run(self):
         """Run method that performs all the real work: show loader dialog."""

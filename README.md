@@ -1,6 +1,6 @@
 # INDE Serviços Brasil
 
-Plugin para QGIS que permite acessar facilmente os serviços geoespaciais do DBDG (Diretório Brasileiro de Dados Geoespaciais) da INDE Brasil.
+Plugin para QGIS que permite acessar, de maneira centralizada, todos os serviços geoespaciais do DBDG (Diretório Brasileiro de Dados Geoespaciais) da INDE Brasil.
 
 ## Descrição
 
@@ -9,12 +9,14 @@ Este plugin foi desenvolvido para facilitar o acesso aos serviços WMS, WFS e WC
 ### Características
 
 - Interface amigável com abas separadas para WMS, WFS e WCS
-- Organização dos serviços por instituição em uma estrutura de árvore
+- Organização dos serviços por instituição
 - Pesquisa rápida de instituições
 - Integração direta com o projeto QGIS atual
-- Suporte completo para serviços WMS, WFS e WCS
+- Suporte para consumo de serviços WMS, WFS e WCS
+- Permite paginar features do WFS e requisitar nos formatos, GML, Shape-zip e Geojson, se disponíveis
+- Permite visualizar metadados associados ao geosserviços
 - Cache de capacidades para melhor performance
-- Interface moderna e responsiva
+
 
 ## Instalação
 
@@ -27,13 +29,12 @@ Este plugin foi desenvolvido para facilitar o acesso aos serviços WMS, WFS e WC
 
 ## Uso
 
-1. Clique no ícone "INDE Serviços Brasil" na barra de ferramentas
+1. Clique no ícone "Serviços DBDG/INDE" na barra de ferramentas
 2. Selecione a aba do tipo de serviço desejado (WMS, WFS ou WCS)
-3. Use a barra de pesquisa para filtrar instituições
-4. Selecione uma instituição na lista
-5. Clique em "Adicionar Camada"
-6. Selecione a camada/feição desejada no diálogo que aparece
-7. Clique em "Adicionar" para adicionar ao projeto
+3. Selecione ou filtre uma instituição na lista
+4. Escolha ou filtre a camada 
+5. Clique no botão Adicionar camada ao projeto
+
 
 ## Requisitos
 
