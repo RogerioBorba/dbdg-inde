@@ -3,7 +3,7 @@
 Dialog for browsing INDE catalog and loading WMS/WFS/WCS layers.
 """
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QTimer, Qt
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QComboBox,
@@ -19,12 +19,143 @@ from qgis.PyQt.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
 )
-from qgis.core import QgsProject
+from qgis.core import QgsNetworkAccessManager, QgsProject
 import unicodedata
 
 from .catalog_client import fetch_catalog
 from .metadata_viewer import MetadataSummaryDialog, fetch_metadata_summary
 from .service_handlers import build_service_handlers
+
+
+class DownloadSpinnerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Aguarde")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModal)
+        self.setMinimumWidth(360)
+
+        self._frames = ["|", "/", "-", "\\"]
+        self._frame_index = 0
+
+        self.spinner_label = QLabel(self._frames[0])
+        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setMinimumWidth(18)
+
+        self.message_label = QLabel()
+        self.message_label.setWordWrap(True)
+
+        layout = QHBoxLayout()
+        layout.addWidget(self.spinner_label)
+        layout.addWidget(self.message_label, 1)
+        self.setLayout(layout)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(120)
+        self.timer.timeout.connect(self._advance_spinner)
+
+        self.set_downloaded_bytes(0)
+
+    def showEvent(self, event):
+        self.timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self.timer.stop()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        super().closeEvent(event)
+
+    def set_downloaded_bytes(self, bytes_received):
+        self.message_label.setText(
+            f"Baixando dados... ({self._format_bytes(bytes_received)} recebidos)"
+        )
+
+    def _advance_spinner(self):
+        self._frame_index = (self._frame_index + 1) % len(self._frames)
+        self.spinner_label.setText(self._frames[self._frame_index])
+
+    @staticmethod
+    def _format_bytes(num_bytes):
+        units = ["B", "KB", "MB", "GB", "TB"]
+        size = float(max(num_bytes, 0))
+        unit_index = 0
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(size)} {units[unit_index]}"
+        return f"{size:.1f} {units[unit_index]}"
+
+
+class NetworkDownloadTracker:
+    def __init__(self, progress_dialog):
+        self.progress_dialog = progress_dialog
+        self.network_manager = QgsNetworkAccessManager.instance()
+        self.active_request_ids = set()
+
+    def start(self):
+        signal_name = self._request_signal_name()
+        if signal_name:
+            getattr(self.network_manager, signal_name).connect(self._on_request_created)
+        self.network_manager.downloadProgress.connect(self._on_download_progress)
+        self.network_manager.finished.connect(self._on_request_finished)
+
+    def stop(self):
+        signal_name = self._request_signal_name()
+        if signal_name:
+            try:
+                getattr(self.network_manager, signal_name).disconnect(self._on_request_created)
+            except TypeError:
+                pass
+        try:
+            self.network_manager.downloadProgress.disconnect(self._on_download_progress)
+        except TypeError:
+            pass
+        try:
+            self.network_manager.finished.disconnect(self._on_request_finished)
+        except TypeError:
+            pass
+        self.active_request_ids.clear()
+
+    def _request_signal_name(self):
+        if hasattr(self.network_manager, "requestAboutToBeCreated"):
+            return "requestAboutToBeCreated"
+        if hasattr(self.network_manager, "requestCreated"):
+            return "requestCreated"
+        return None
+
+    def _on_request_created(self, *args):
+        for arg in args:
+            try:
+                request_url = arg.request().url().toString().lower()
+                request_id = arg.requestId()
+            except Exception:
+                continue
+
+            if any(
+                token in request_url
+                for token in ("request=getmap", "request=getfeature", "request=getcoverage")
+            ):
+                self.active_request_ids.add(request_id)
+                return
+
+    def _on_download_progress(self, *args):
+        if len(args) < 3:
+            return
+        request_id, bytes_received, _bytes_total = args[:3]
+        if self.active_request_ids and request_id not in self.active_request_ids:
+            return
+        self.progress_dialog.set_downloaded_bytes(bytes_received)
+        QApplication.processEvents()
+
+    def _on_request_finished(self, *args):
+        reply = args[0] if args else None
+        request_id = getattr(reply, "requestId", lambda: None)()
+        if request_id in self.active_request_ids:
+            self.active_request_ids.discard(request_id)
 
 
 class ServiceLoaderDialog(QDialog):
@@ -231,14 +362,6 @@ class ServiceLoaderDialog(QDialog):
             QMessageBox.warning(self, "Erro", f"Tipo de servico nao suportado: {service_type}")
             return
 
-        loading_message = "Carregando camada..."
-        if service_type == "wcs":
-            loading_message = "Carregando coverage WCS. Isso pode levar alguns segundos..."
-        elif service_type == "wfs":
-            loading_message = "Carregando camada WFS. Isso pode levar alguns segundos..."
-        elif service_type == "wms":
-            loading_message = "Carregando camada WMS. Isso pode levar alguns segundos..."
-
         startindex = self._parse_optional_int(
             self.wfs_startindex_input.text(),
             "STARTINDEX",
@@ -254,11 +377,9 @@ class ServiceLoaderDialog(QDialog):
         if count is None and self.wfs_count_input.text().strip():
             return
 
-        progress = QProgressDialog(loading_message, "", 0, 0, self)
-        progress.setWindowTitle("Aguarde")
-        progress.setCancelButton(None)
-        progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress = DownloadSpinnerDialog(self)
+        network_tracker = NetworkDownloadTracker(progress)
+        network_tracker.start()
         progress.show()
         QApplication.processEvents()
 
@@ -270,6 +391,7 @@ class ServiceLoaderDialog(QDialog):
                     "format_text": self.format_combo.currentText(),
                     "startindex": startindex,
                     "count": count,
+                    "progress_callback": progress.set_downloaded_bytes,
                 },
                 parent=self,
             )
@@ -282,6 +404,7 @@ class ServiceLoaderDialog(QDialog):
         except Exception as error:
             QMessageBox.critical(self, "Erro", f"Excecao: {error}")
         finally:
+            network_tracker.stop()
             progress.close()
 
     def open_metadata(self):

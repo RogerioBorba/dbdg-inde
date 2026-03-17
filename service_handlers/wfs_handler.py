@@ -84,6 +84,7 @@ class WfsServiceHandler(ServiceHandler):
         selected_format = (options or {}).get("format_text", "GML (padrao)")
         startindex = (options or {}).get("startindex")
         count = (options or {}).get("count")
+        progress_callback = (options or {}).get("progress_callback")
         output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
         QApplication.processEvents()
         temp_file = self._download_wfs_file(
@@ -92,6 +93,7 @@ class WfsServiceHandler(ServiceHandler):
             output_format,
             startindex=startindex,
             count=count,
+            progress_callback=progress_callback,
         )
 
         if not temp_file:
@@ -110,6 +112,7 @@ class WfsServiceHandler(ServiceHandler):
         output_format,
         startindex=None,
         count=None,
+        progress_callback=None,
         timeout=60,
     ):
         context = ssl.create_default_context()
@@ -146,7 +149,12 @@ class WfsServiceHandler(ServiceHandler):
                 params_with_srs["outputFormat"] = current_format
 
             request_url = self._build_url(url, params_with_srs)
-            data = self._attempt_download(request_url, context, timeout)
+            data = self._attempt_download(
+                request_url,
+                context,
+                timeout,
+                progress_callback=progress_callback,
+            )
             if data is not None:
                 break
 
@@ -155,7 +163,12 @@ class WfsServiceHandler(ServiceHandler):
                 params_without_srs["outputFormat"] = current_format
             retry_url = self._build_url(url, params_without_srs)
             print(f"[WFS] retrying without srsName: {retry_url}")
-            data = self._attempt_download(retry_url, context, timeout)
+            data = self._attempt_download(
+                retry_url,
+                context,
+                timeout,
+                progress_callback=progress_callback,
+            )
             if data is not None:
                 break
 
@@ -176,11 +189,22 @@ class WfsServiceHandler(ServiceHandler):
         return f"{base_url}?{query}"
 
     @staticmethod
-    def _attempt_download(request_url, context, timeout):
+    def _attempt_download(request_url, context, timeout, progress_callback=None):
         try:
             print(f"[WFS] Requesting: {request_url}")
             with urllib.request.urlopen(request_url, context=context, timeout=timeout) as response:
-                return response.read()
+                chunks = []
+                bytes_received = 0
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    bytes_received += len(chunk)
+                    if callable(progress_callback):
+                        progress_callback(bytes_received)
+                        QApplication.processEvents()
+                return b"".join(chunks)
         except urllib.error.HTTPError as error:
             body_preview = ""
             try:
