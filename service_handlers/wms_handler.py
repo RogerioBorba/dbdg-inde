@@ -1,8 +1,6 @@
-import ssl
-import urllib.request
-
 from qgis.core import QgsRasterLayer
 
+from ..network_utils import urlopen
 from .base import ServiceHandler, parse_xml_safe
 
 
@@ -17,8 +15,7 @@ class WmsServiceHandler(ServiceHandler):
         if not capabilities_url:
             return []
 
-        context = ssl.create_default_context()
-        with urllib.request.urlopen(capabilities_url, context=context, timeout=30) as response:
+        with urlopen(capabilities_url, timeout=30) as response:
             xml_data = response.read()
 
         root = parse_xml_safe(xml_data)

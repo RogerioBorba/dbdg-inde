@@ -1,6 +1,6 @@
 import json
-import ssl
-import urllib.request
+
+from .network_utils import urlopen
 
 
 CATALOG_URL = "https://inde.gov.br/api/catalogo/get"
@@ -8,6 +8,5 @@ CATALOG_URL = "https://inde.gov.br/api/catalogo/get"
 
 def fetch_catalog():
     """Download and parse JSON catalog from the INDE API."""
-    context = ssl.create_default_context()
-    with urllib.request.urlopen(CATALOG_URL, context=context, timeout=30) as response:
+    with urlopen(CATALOG_URL, timeout=40) as response:
         return json.load(response)

@@ -1,15 +1,14 @@
 import os
 import re
-import ssl
 import tempfile
 import urllib.error
 import urllib.parse
-import urllib.request
 import zipfile
 
 from qgis.PyQt.QtWidgets import QApplication, QMessageBox
-from qgis.core import QgsGeometry, QgsVectorLayer, QgsWkbTypes
+from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry, QgsVectorLayer, QgsWkbTypes
 
+from ..network_utils import create_ssl_context, urlopen
 from .base import ServiceHandler, parse_xml_safe
 
 
@@ -31,8 +30,7 @@ class WfsServiceHandler(ServiceHandler):
         if not capabilities_url:
             return []
 
-        context = ssl.create_default_context()
-        with urllib.request.urlopen(capabilities_url, context=context, timeout=30) as response:
+        with urlopen(capabilities_url, timeout=30) as response:
             xml_data = response.read()
 
         root = parse_xml_safe(xml_data)
@@ -87,7 +85,7 @@ class WfsServiceHandler(ServiceHandler):
         progress_callback = (options or {}).get("progress_callback")
         output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
         QApplication.processEvents()
-        temp_file = self._download_wfs_file(
+        temp_file, fallback_crs_authid = self._download_wfs_file(
             service_url,
             layer_name,
             output_format,
@@ -100,10 +98,10 @@ class WfsServiceHandler(ServiceHandler):
             raise Exception("Falha ao baixar dados WFS do servidor.")
 
         if output_format == "shape-zip":
-            return self._load_shapefile(temp_file, layer_name, parent)
+            return self._load_shapefile(temp_file, layer_name, parent, fallback_crs_authid)
         if "json" in output_format.lower():
-            return self._load_json(temp_file, layer_name)
-        return self._load_gml(temp_file, layer_name)
+            return self._load_json(temp_file, layer_name, fallback_crs_authid)
+        return self._load_gml(temp_file, layer_name, fallback_crs_authid)
 
     def _download_wfs_file(
         self,
@@ -115,9 +113,7 @@ class WfsServiceHandler(ServiceHandler):
         progress_callback=None,
         timeout=60,
     ):
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context = create_ssl_context()
 
         base_params = {
             "service": "WFS",
@@ -142,6 +138,7 @@ class WfsServiceHandler(ServiceHandler):
             output_formats = [output_format]
 
         data = None
+        fallback_crs_authid = None
         for current_format in output_formats:
             params_with_srs = dict(base_params)
             params_with_srs["srsName"] = "EPSG:4326"
@@ -156,6 +153,7 @@ class WfsServiceHandler(ServiceHandler):
                 progress_callback=progress_callback,
             )
             if data is not None:
+                fallback_crs_authid = "EPSG:4326"
                 break
 
             params_without_srs = dict(base_params)
@@ -174,14 +172,14 @@ class WfsServiceHandler(ServiceHandler):
 
         if data is None:
             print("[WFS] All download attempts failed")
-            return None
+            return None, None
 
         suffix = self._file_suffix_for_format(output_format)
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         temp_file.write(data)
         temp_file.close()
         print(f"[WFS] Downloaded to {temp_file.name}")
-        return temp_file.name
+        return temp_file.name, fallback_crs_authid
 
     @staticmethod
     def _build_url(base_url, params):
@@ -192,7 +190,7 @@ class WfsServiceHandler(ServiceHandler):
     def _attempt_download(request_url, context, timeout, progress_callback=None):
         try:
             print(f"[WFS] Requesting: {request_url}")
-            with urllib.request.urlopen(request_url, context=context, timeout=timeout) as response:
+            with urlopen(request_url, context=context, timeout=timeout) as response:
                 chunks = []
                 bytes_received = 0
                 while True:
@@ -266,7 +264,7 @@ class WfsServiceHandler(ServiceHandler):
                     return value
         return None
 
-    def _load_shapefile(self, temp_file, layer_name, parent):
+    def _load_shapefile(self, temp_file, layer_name, parent, fallback_crs_authid=None):
         try:
             with zipfile.ZipFile(temp_file, "r") as zipped:
                 zipped.extractall(os.path.dirname(temp_file))
@@ -280,6 +278,7 @@ class WfsServiceHandler(ServiceHandler):
                 raise Exception("Nenhum arquivo .shp encontrado no zip baixado.")
 
             layer = QgsVectorLayer(shapefile_path, layer_name, "ogr")
+            layer = self._apply_fallback_crs(layer, fallback_crs_authid)
             if layer.isValid() and self._should_ask_coordinate_flip(layer):
                 answer = QMessageBox.question(
                     parent,
@@ -356,13 +355,28 @@ class WfsServiceHandler(ServiceHandler):
         return re.sub(pattern, swap, wkt)
 
     @staticmethod
-    def _load_json(temp_file, layer_name):
-        return QgsVectorLayer(temp_file, layer_name, "ogr")
+    def _load_json(temp_file, layer_name, fallback_crs_authid=None):
+        layer = QgsVectorLayer(temp_file, layer_name, "ogr")
+        return WfsServiceHandler._apply_fallback_crs(layer, fallback_crs_authid)
 
     @staticmethod
-    def _load_gml(temp_file, layer_name):
+    def _load_gml(temp_file, layer_name, fallback_crs_authid=None):
         layer = QgsVectorLayer(temp_file, layer_name, "ogr")
+        layer = WfsServiceHandler._apply_fallback_crs(layer, fallback_crs_authid)
         if layer.isValid():
             return layer
         uri = f"{temp_file}|geometrytype=auto"
-        return QgsVectorLayer(uri, layer_name, "ogr")
+        layer = QgsVectorLayer(uri, layer_name, "ogr")
+        return WfsServiceHandler._apply_fallback_crs(layer, fallback_crs_authid)
+
+    @staticmethod
+    def _apply_fallback_crs(layer, fallback_crs_authid):
+        if not layer or not fallback_crs_authid or not layer.isValid():
+            return layer
+        if layer.crs().isValid():
+            return layer
+
+        fallback_crs = QgsCoordinateReferenceSystem(fallback_crs_authid)
+        if fallback_crs.isValid():
+            layer.setCrs(fallback_crs)
+        return layer

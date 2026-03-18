@@ -1,11 +1,10 @@
 import html
 import re
-import ssl
 import urllib.parse
-import urllib.request
 
 from qgis.PyQt.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayout
 
+from .network_utils import create_ssl_context, urlopen
 from .service_handlers.base import parse_xml_safe
 
 ISO19139_OUTPUT_SCHEMA = "http://www.isotc211.org/2005/gmd"
@@ -185,7 +184,7 @@ def _prepare_metadata_url(url, preferred_schema=ISO19139_OUTPUT_SCHEMA):
 
 
 def fetch_metadata_summary(metadata_url, timeout=30):
-    context = ssl.create_default_context()
+    context = create_ssl_context()
     candidate_urls = []
     for schema in (ISO19139_OUTPUT_SCHEMA, ISO19115_3_OUTPUT_SCHEMA):
         candidate = _prepare_metadata_url(metadata_url, preferred_schema=schema)
@@ -196,7 +195,7 @@ def fetch_metadata_summary(metadata_url, timeout=30):
     last_error = None
     for candidate_url in candidate_urls:
         try:
-            with urllib.request.urlopen(candidate_url, context=context, timeout=timeout) as response:
+            with urlopen(candidate_url, context=context, timeout=timeout) as response:
                 xml_data = response.read()
             root = parse_xml_safe(xml_data)
             metadata_url = candidate_url

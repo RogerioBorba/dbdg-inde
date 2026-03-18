@@ -24,6 +24,7 @@ import unicodedata
 
 from .catalog_client import fetch_catalog
 from .metadata_viewer import MetadataSummaryDialog, fetch_metadata_summary
+from .network_utils import describe_ssl_context
 from .service_handlers import build_service_handlers
 
 
@@ -245,7 +246,11 @@ class ServiceLoaderDialog(QDialog):
         try:
             self.catalog = fetch_catalog()
         except Exception as error:
-            QMessageBox.critical(self, "Erro", f"Nao foi possivel carregar o catalogo: {error}")
+            QMessageBox.critical(
+                self,
+                "Erro",
+                f"Nao foi possivel carregar o catalogo: {error}\n\n{describe_ssl_context()}",
+            )
             return
 
         self.apply_catalog_filter()
