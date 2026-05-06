@@ -14,6 +14,7 @@ from qgis.PyQt.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QTabWidget,
@@ -89,6 +90,78 @@ class DownloadSpinnerDialog(QDialog):
         if unit_index == 0:
             return f"{int(size)} {units[unit_index]}"
         return f"{size:.1f} {units[unit_index]}"
+
+
+class WfsFeatureProgressDialog(QDialog):
+    def __init__(self, total_features, parent=None):
+        super().__init__(parent)
+        self.total_features = max(total_features, 1)
+        self._downloaded_bytes = 0
+        self._downloaded_features = 0
+        self.setWindowTitle("Aguarde")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModal)
+        self.setMinimumWidth(420)
+
+        self._frames = ["|", "/", "-", "\\"]
+        self._frame_index = 0
+
+        self.spinner_label = QLabel(self._frames[0])
+        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setMinimumWidth(18)
+
+        self.message_label = QLabel()
+        self.message_label.setWordWrap(True)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, self.total_features)
+        self.progress_bar.setValue(0)
+
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(self.spinner_label)
+        header_layout.addWidget(self.message_label, 1)
+
+        layout = QVBoxLayout()
+        layout.addLayout(header_layout)
+        layout.addWidget(self.progress_bar)
+        self.setLayout(layout)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(120)
+        self.timer.timeout.connect(self._advance_spinner)
+        self._refresh_message()
+
+    def showEvent(self, event):
+        self.timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self.timer.stop()
+        super().hideEvent(event)
+
+    def update_feature_progress(self, downloaded_features, total_features=None):
+        self.total_features = max(total_features or self.total_features, 1)
+        self._downloaded_features = min(max(downloaded_features, 0), self.total_features)
+        self.progress_bar.setMaximum(self.total_features)
+        self.progress_bar.setValue(self._downloaded_features)
+        self._refresh_message()
+
+    def set_downloaded_bytes(self, bytes_received):
+        self._downloaded_bytes = max(bytes_received, 0)
+        self._refresh_message()
+        QApplication.processEvents()
+
+    def _advance_spinner(self):
+        self._frame_index = (self._frame_index + 1) % len(self._frames)
+        self.spinner_label.setText(self._frames[self._frame_index])
+
+    def _refresh_message(self):
+        self.message_label.setText(
+            "Baixando feicoes WFS... "
+            f"{self._downloaded_features} de {self.total_features} "
+            f"({DownloadSpinnerDialog._format_bytes(self._downloaded_bytes)} recebidos)"
+        )
+        QApplication.processEvents()
 
 
 class NetworkDownloadTracker:
@@ -382,13 +455,52 @@ class ServiceLoaderDialog(QDialog):
         if count is None and self.wfs_count_input.text().strip():
             return
 
-        progress = DownloadSpinnerDialog(self)
-        network_tracker = NetworkDownloadTracker(progress)
-        network_tracker.start()
-        progress.show()
-        QApplication.processEvents()
-
         try:
+            progress = None
+            network_tracker = None
+            feature_count_callback = None
+            total_features = None
+
+            if service_type == "wfs":
+                if startindex is not None and count is not None:
+                    total_features = count
+                else:
+                    count_progress = QProgressDialog(
+                        "Consultando quantidade de feicoes...",
+                        "",
+                        0,
+                        0,
+                        self,
+                    )
+                    count_progress.setWindowTitle("Aguarde")
+                    count_progress.setCancelButton(None)
+                    count_progress.setMinimumDuration(0)
+                    count_progress.setWindowModality(Qt.WindowModal)
+                    count_progress.show()
+                    QApplication.processEvents()
+                    try:
+                        total_features = handler.get_feature_count(
+                            entry=entry,
+                            layer_name=layer_name,
+                            startindex=startindex,
+                            count=count,
+                        )
+                    finally:
+                        count_progress.close()
+
+                if total_features > 5000:
+                    progress = WfsFeatureProgressDialog(total_features, self)
+                    feature_count_callback = progress.update_feature_progress
+                else:
+                    progress = DownloadSpinnerDialog(self)
+            else:
+                progress = DownloadSpinnerDialog(self)
+
+            network_tracker = NetworkDownloadTracker(progress)
+            network_tracker.start()
+            progress.show()
+            QApplication.processEvents()
+
             layer = handler.create_layer(
                 entry=entry,
                 layer_name=layer_name,
@@ -396,7 +508,9 @@ class ServiceLoaderDialog(QDialog):
                     "format_text": self.format_combo.currentText(),
                     "startindex": startindex,
                     "count": count,
+                    "feature_count": total_features,
                     "progress_callback": progress.set_downloaded_bytes,
+                    "feature_progress_callback": feature_count_callback,
                 },
                 parent=self,
             )
@@ -409,8 +523,10 @@ class ServiceLoaderDialog(QDialog):
         except Exception as error:
             QMessageBox.critical(self, "Erro", f"Excecao: {error}")
         finally:
-            network_tracker.stop()
-            progress.close()
+            if network_tracker:
+                network_tracker.stop()
+            if progress:
+                progress.close()
 
     def open_metadata(self):
         metadata_url = self._get_selected_metadata_url()

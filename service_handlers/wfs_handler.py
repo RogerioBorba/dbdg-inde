@@ -4,9 +4,10 @@ import tempfile
 import urllib.error
 import urllib.parse
 import zipfile
+import xml.etree.ElementTree as ET
 
 from qgis.PyQt.QtWidgets import QApplication, QMessageBox
-from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry, QgsVectorLayer, QgsWkbTypes
+from qgis.core import QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsVectorLayer, QgsWkbTypes
 
 from ..network_utils import create_ssl_context, urlopen
 from .base import ServiceHandler, parse_xml_safe
@@ -83,8 +84,26 @@ class WfsServiceHandler(ServiceHandler):
         startindex = (options or {}).get("startindex")
         count = (options or {}).get("count")
         progress_callback = (options or {}).get("progress_callback")
-        output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
+        feature_progress_callback = (options or {}).get("feature_progress_callback")
+        feature_count = (options or {}).get("feature_count")
+        requested_output_format = self.FORMAT_MAP.get(selected_format, "application/gml+xml")
+        output_format = self._effective_output_format(requested_output_format)
+        effective_count = feature_count
+        if effective_count is None:
+            effective_count = self._resolve_effective_count(service_url, layer_name, startindex, count)
         QApplication.processEvents()
+        if effective_count > 5000:
+            return self._create_paginated_layer(
+                service_url,
+                layer_name,
+                output_format,
+                effective_count,
+                startindex=startindex,
+                progress_callback=progress_callback,
+                feature_progress_callback=feature_progress_callback,
+                parent=parent,
+            )
+
         temp_file, fallback_crs_authid = self._download_wfs_file(
             service_url,
             layer_name,
@@ -102,6 +121,130 @@ class WfsServiceHandler(ServiceHandler):
         if "json" in output_format.lower():
             return self._load_json(temp_file, layer_name, fallback_crs_authid)
         return self._load_gml(temp_file, layer_name, fallback_crs_authid)
+
+    def get_feature_count(self, entry, layer_name, startindex=None, count=None):
+        service_url = entry.get("url")
+        return self._resolve_effective_count(service_url, layer_name, startindex, count)
+
+    def _resolve_effective_count(self, service_url, layer_name, startindex=None, count=None):
+        if startindex is not None and count is not None:
+            return max(0, count)
+
+        total_count = self._fetch_feature_count(service_url, layer_name)
+        if total_count is None:
+            raise Exception("Nao foi possivel determinar a quantidade de feicoes da camada.")
+
+        initial_index = startindex or 0
+        if initial_index >= total_count:
+            return 0
+        remaining = total_count - initial_index
+        if count is None:
+            return remaining
+        return max(0, min(remaining, count))
+
+    def _fetch_feature_count(self, url, layer_name, timeout=30):
+        context = create_ssl_context()
+        base_params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeNames": layer_name,
+            "resultType": "hits",
+        }
+
+        for include_srs in (True, False):
+            params = dict(base_params)
+            if include_srs:
+                params["srsName"] = "EPSG:4326"
+            request_url = self._build_url(url, params)
+            try:
+                with urlopen(request_url, context=context, timeout=timeout) as response:
+                    xml_data = response.read()
+                feature_count = self._parse_feature_count(xml_data)
+                if feature_count is not None:
+                    return feature_count
+            except Exception as error:
+                print(f"[WFS] count request error: {error}")
+        return None
+
+    @staticmethod
+    def _parse_feature_count(xml_data):
+        try:
+            root = parse_xml_safe(xml_data)
+        except ET.ParseError as error:
+            print(f"[WFS] count parse error: {error}")
+            return None
+
+        for attr_name, attr_value in root.attrib.items():
+            local_name = attr_name.split("}", 1)[-1]
+            if local_name in ("numberMatched", "numberOfFeatures"):
+                if attr_value == "unknown":
+                    return None
+                try:
+                    return int(attr_value)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _create_paginated_layer(
+        self,
+        service_url,
+        layer_name,
+        output_format,
+        total_features,
+        startindex=None,
+        progress_callback=None,
+        feature_progress_callback=None,
+        parent=None,
+    ):
+        chunk_size = 5000
+        initial_index = startindex or 0
+        downloaded_features = 0
+        downloaded_bytes = 0
+        merged_layer = None
+
+        while downloaded_features < total_features:
+            current_count = min(chunk_size, total_features - downloaded_features)
+            current_start = initial_index + downloaded_features
+            current_chunk_bytes = {"value": 0}
+
+            def chunk_progress_callback(bytes_received):
+                current_chunk_bytes["value"] = max(bytes_received, 0)
+                if callable(progress_callback):
+                    progress_callback(downloaded_bytes + current_chunk_bytes["value"])
+
+            temp_file, fallback_crs_authid = self._download_wfs_file(
+                service_url,
+                layer_name,
+                output_format,
+                startindex=current_start,
+                count=current_count,
+                progress_callback=chunk_progress_callback,
+            )
+            if not temp_file:
+                raise Exception("Falha ao baixar um dos blocos de dados WFS.")
+
+            current_layer = self._load_downloaded_layer(
+                temp_file,
+                layer_name,
+                output_format,
+                fallback_crs_authid,
+                parent,
+            )
+            if not current_layer or not current_layer.isValid():
+                raise Exception("Falha ao carregar um dos blocos de dados WFS.")
+
+            if merged_layer is None:
+                merged_layer = self._create_memory_layer_from_source(current_layer, layer_name)
+            self._append_features(merged_layer, current_layer)
+
+            downloaded_bytes += current_chunk_bytes["value"]
+            downloaded_features += current_layer.featureCount() or current_count
+            if callable(feature_progress_callback):
+                feature_progress_callback(min(downloaded_features, total_features), total_features)
+                QApplication.processEvents()
+
+        return merged_layer
 
     def _download_wfs_file(
         self,
@@ -139,9 +282,11 @@ class WfsServiceHandler(ServiceHandler):
 
         data = None
         fallback_crs_authid = None
+        preferred_srs_name = self._preferred_srs_name(output_format)
         for current_format in output_formats:
             params_with_srs = dict(base_params)
-            params_with_srs["srsName"] = "EPSG:4326"
+            if preferred_srs_name:
+                params_with_srs["srsName"] = preferred_srs_name
             if current_format:
                 params_with_srs["outputFormat"] = current_format
 
@@ -180,6 +325,20 @@ class WfsServiceHandler(ServiceHandler):
         temp_file.close()
         print(f"[WFS] Downloaded to {temp_file.name}")
         return temp_file.name, fallback_crs_authid
+
+    @staticmethod
+    def _preferred_srs_name(output_format):
+        if output_format == "shape-zip":
+            return None
+        return "EPSG:4326"
+
+    @staticmethod
+    def _effective_output_format(output_format):
+        if output_format == "shape-zip":
+            # Some INDE services swap axes in shapefile exports while GeoJSON
+            # loads correctly in QGIS, so prefer GeoJSON for project loading.
+            return "application/json"
+        return output_format
 
     @staticmethod
     def _build_url(base_url, params):
@@ -292,6 +451,42 @@ class WfsServiceHandler(ServiceHandler):
             return layer
         except Exception as error:
             raise Exception(f"Falha ao extrair shapefile: {error}")
+
+    def _load_downloaded_layer(self, temp_file, layer_name, output_format, fallback_crs_authid, parent):
+        if "json" in output_format.lower():
+            return self._load_json(temp_file, layer_name, fallback_crs_authid)
+        return self._load_gml(temp_file, layer_name, fallback_crs_authid)
+
+    @staticmethod
+    def _create_memory_layer_from_source(source_layer, layer_name):
+        geometry_type = QgsWkbTypes.displayString(source_layer.wkbType()) or "None"
+        crs_authid = source_layer.crs().authid() if source_layer.crs().isValid() else ""
+        uri = geometry_type
+        if crs_authid:
+            uri = f"{uri}?crs={crs_authid}"
+        memory_layer = QgsVectorLayer(uri, layer_name, "memory")
+        provider = memory_layer.dataProvider()
+        provider.addAttributes(list(source_layer.fields()))
+        memory_layer.updateFields()
+        if crs_authid and not memory_layer.crs().isValid():
+            memory_layer.setCrs(QgsCoordinateReferenceSystem(crs_authid))
+        return memory_layer
+
+    @staticmethod
+    def _append_features(target_layer, source_layer):
+        provider = target_layer.dataProvider()
+        target_fields = target_layer.fields()
+        features = []
+        for source_feature in source_layer.getFeatures():
+            feature = QgsFeature(target_fields)
+            feature.setAttributes(source_feature.attributes())
+            if source_feature.hasGeometry():
+                feature.setGeometry(source_feature.geometry())
+            features.append(feature)
+
+        if features:
+            provider.addFeatures(features)
+            target_layer.updateExtents()
 
     @staticmethod
     def _should_ask_coordinate_flip(layer):
