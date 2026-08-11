@@ -66,23 +66,26 @@ def _candidate_ca_directories():
         ]
     )
 
+    qgis_roots = ()
     try:
         from qgis.core import QgsApplication
 
-        for qgis_root in (QgsApplication.prefixPath(), QgsApplication.pkgDataPath()):
-            if qgis_root:
-                paths.extend(
-                    [
-                        qgis_root,
-                        os.path.join(qgis_root, "bin"),
-                        os.path.join(qgis_root, "resources"),
-                        os.path.join(qgis_root, "resources", "ssl"),
-                        os.path.join(qgis_root, "resources", "ssl", "certs"),
-                        os.path.join(qgis_root, "certs"),
-                    ]
-                )
-    except Exception:
-        pass
+        qgis_roots = (QgsApplication.prefixPath(), QgsApplication.pkgDataPath())
+    except (ImportError, RuntimeError):
+        qgis_roots = ()
+
+    for qgis_root in qgis_roots:
+        if qgis_root:
+            paths.extend(
+                [
+                    qgis_root,
+                    os.path.join(qgis_root, "bin"),
+                    os.path.join(qgis_root, "resources"),
+                    os.path.join(qgis_root, "resources", "ssl"),
+                    os.path.join(qgis_root, "resources", "ssl", "certs"),
+                    os.path.join(qgis_root, "certs"),
+                ]
+            )
 
     seen = set()
     for path in paths:
@@ -104,14 +107,16 @@ def _ca_bundle_path():
     if existing:
         return existing
 
+    certifi_path = None
     try:
         import certifi
 
-        existing = _existing_file(certifi.where())
-        if existing:
-            return existing
-    except Exception:
-        pass
+        certifi_path = certifi.where()
+    except (ImportError, OSError):
+        certifi_path = None
+    existing = _existing_file(certifi_path)
+    if existing:
+        return existing
 
     verify_paths = ssl.get_default_verify_paths()
     for candidate in (verify_paths.cafile, verify_paths.openssl_cafile):

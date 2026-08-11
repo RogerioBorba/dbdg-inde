@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Dialogs used to build spatial filters for WFS requests."""
 
-from xml.sax.saxutils import escape
+import html
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
@@ -238,7 +238,9 @@ class SpatialFilterDialog(QDialog):
             '<fes:Filter xmlns:fes="http://www.opengis.net/fes/2.0" '
             'xmlns:gml="http://www.opengis.net/gml/3.2">'
             '<fes:{0}><fes:ValueReference>{1}</fes:ValueReference>{2}'
-            '</fes:{0}></fes:Filter>'.format(operator, escape(property_name), gml)
+            '</fes:{0}></fes:Filter>'.format(
+                operator, html.escape(property_name, quote=True), gml
+            )
         )
 
     def _accept_if_valid(self):

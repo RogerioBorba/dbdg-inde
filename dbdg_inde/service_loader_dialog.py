@@ -207,7 +207,7 @@ class NetworkDownloadTracker:
             try:
                 request_url = arg.request().url().toString().lower()
                 request_id = arg.requestId()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError):
                 continue
 
             if any(

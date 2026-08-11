@@ -7,7 +7,9 @@ third-party defusedxml package.
 
 import re
 import xml.parsers.expat as expat
-import xml.etree.ElementTree as _ET
+# ElementTree only supplies element containers; hardened Expat handlers below
+# parse all input and reject DTD and entity declarations.
+import xml.etree.ElementTree as _ET  # nosec B405
 
 from .common import DTDForbidden, EntitiesForbidden
 

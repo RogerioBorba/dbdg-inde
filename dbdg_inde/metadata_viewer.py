@@ -177,9 +177,10 @@ def _prepare_metadata_url(url, preferred_schema=ISO19139_OUTPUT_SCHEMA):
             new_q = urllib.parse.urlencode(query, doseq=True)
             parsed = parsed._replace(query=new_q)
             return urllib.parse.urlunparse(parsed)
-    except Exception:
-        # on any parsing error just return original URL
-        pass
+    except (TypeError, ValueError, AttributeError):
+        # A malformed catalog URL is left untouched; the network layer will
+        # still reject unsupported schemes before issuing a request.
+        return url
     return url
 
 

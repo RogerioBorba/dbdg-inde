@@ -444,8 +444,8 @@ class WfsServiceHandler(ServiceHandler):
             body_preview = ""
             try:
                 body_preview = error.read(300).decode("utf-8", errors="ignore")
-            except Exception:
-                pass
+            except (AttributeError, OSError, ValueError):
+                body_preview = "<response body unavailable>"
             print(f"[WFS] HTTP {error.code}: {error.reason}. Body preview: {body_preview}")
             return None
         except Exception as error:
