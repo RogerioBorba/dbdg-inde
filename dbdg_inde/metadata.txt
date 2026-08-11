@@ -1,0 +1,28 @@
+# Conteúdo do arquivo metadata.txt
+[general]
+name=IndeServicosBR
+qgisMinimumVersion=3.0
+description=Plugin para acesso aos geoserviços da INDE Brasil/Plugin for accessing INDE Brasil's geospatial services.
+version=0.7
+author=Rogério Borba
+email=dbdg@inde.gov.br
+about=Plugin para acesso aos geoserviços da INDE Brasil. Permite acessar facilmente os serviços WMS, WFS e WCS das instituições participantes do DBDG (Diretório Brasileiro de Dados Geoespaciais) da INDE.Plugin for accessing INDE Brasil's geospatial services. Allows easy access to the WMS, WFS, and WCS services of the institutions participating in the DBDG (Brazilian Directory of Geospatial Data) of INDE.
+
+tracker=https://github.com/RogerioBorba/dbdg-inde/issues
+repository=https://github.com/RogerioBorba/dbdg-inde
+homepage=https://github.com/RogerioBorba/dbdg-inde
+
+tags=web,inde,dbdg,brasil,wms,wfs,wcs,geoservicos
+
+category=Web
+icon=icon.png
+
+experimental=False
+deprecated=False
+
+[version]
+qgis=3.0
+
+[pyqgis]
+class=IndeServicosBR
+module=inde_servicos_br
