@@ -20,8 +20,8 @@ Este plugin foi desenvolvido para facilitar o acesso aos serviços WMS, WFS e WC
 
 ## Instalação
 
-1. Baixe o arquivo ZIP do plugin
-2. Abra o QGIS
+1. No QGIS entre no Menu Complementos para instalar o plugin ou
+2. Baixe o arquivo ZIP no Github
 3. Vá para Plugins > Gerenciar e Instalar Plugins
 4. Clique em "Instalar do ZIP"
 5. Selecione o arquivo ZIP baixado
