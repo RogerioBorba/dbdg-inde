@@ -35,14 +35,14 @@ class DownloadSpinnerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Aguarde")
         self.setModal(True)
-        self.setWindowModality(Qt.WindowModal)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumWidth(360)
 
         self._frames = ["|", "/", "-", "\\"]
         self._frame_index = 0
 
         self.spinner_label = QLabel(self._frames[0])
-        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.spinner_label.setMinimumWidth(18)
 
         self.message_label = QLabel()
@@ -101,14 +101,14 @@ class WfsFeatureProgressDialog(QDialog):
         self._downloaded_features = 0
         self.setWindowTitle("Aguarde")
         self.setModal(True)
-        self.setWindowModality(Qt.WindowModal)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumWidth(420)
 
         self._frames = ["|", "/", "-", "\\"]
         self._frame_index = 0
 
         self.spinner_label = QLabel(self._frames[0])
-        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.spinner_label.setMinimumWidth(18)
 
         self.message_label = QLabel()
@@ -410,7 +410,7 @@ class ServiceLoaderDialog(QDialog):
             for service_type, handler in self.handlers.items():
                 if service_is_available(entry, service_type):
                     item = QListWidgetItem(description)
-                    item.setData(Qt.UserRole, entry)
+                    item.setData(Qt.ItemDataRole.UserRole, entry)
                     self.service_widgets[service_type].addItem(item)
 
         self.layer_list.clear()
@@ -436,7 +436,7 @@ class ServiceLoaderDialog(QDialog):
         if not selected_service:
             return
 
-        entry = selected_service.data(Qt.UserRole)
+        entry = selected_service.data(Qt.ItemDataRole.UserRole)
         handler = self.handlers[service_type]
 
         progress = QProgressDialog(
@@ -449,7 +449,7 @@ class ServiceLoaderDialog(QDialog):
         progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setValue(0)
         progress.show()
         QApplication.processEvents()
@@ -473,7 +473,7 @@ class ServiceLoaderDialog(QDialog):
 
     def open_bbox_map(self):
         dialog = BboxMapDialog(self.wfs_bbox_input.text().strip(), self)
-        if dialog.exec_() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.wfs_bbox_input.setText(dialog.bbox_text())
             self.wfs_filter_encoding = ""
             self.wfs_advanced_filter_button.setText("Criar filtro espacial avançado")
@@ -482,7 +482,9 @@ class ServiceLoaderDialog(QDialog):
         selected = self.layer_list.currentItem()
         if not selected:
             return
-        service_type, entry, layer_name, _metadata_url = selected.data(Qt.UserRole)
+        service_type, entry, layer_name, _metadata_url = selected.data(
+            Qt.ItemDataRole.UserRole
+        )
         if service_type != "wfs":
             return
 
@@ -493,7 +495,7 @@ class ServiceLoaderDialog(QDialog):
         progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
         QApplication.processEvents()
         try:
@@ -513,7 +515,7 @@ class ServiceLoaderDialog(QDialog):
             geometry_property=geometry_property or "the_geom",
             parent=self,
         )
-        if dialog.exec_() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.wfs_filter_encoding = dialog.filter_text()
             self.wfs_bbox_input.clear()
             self.wfs_advanced_filter_button.setText("Editar filtro espacial avançado")
@@ -532,7 +534,10 @@ class ServiceLoaderDialog(QDialog):
                 continue
 
             item = QListWidgetItem(layer_title)
-            item.setData(Qt.UserRole, (service_type, entry, layer_name, metadata_url))
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                (service_type, entry, layer_name, metadata_url),
+            )
             self.layer_list.addItem(item)
 
     def update_load_button(self):
@@ -546,7 +551,7 @@ class ServiceLoaderDialog(QDialog):
         selected = self.layer_list.currentItem()
         is_wfs_layer = False
         if selected:
-            data = selected.data(Qt.UserRole)
+            data = selected.data(Qt.ItemDataRole.UserRole)
             is_wfs_layer = bool(
                 data and data[0] == "wfs" and self.current_service_type == "wfs"
             )
@@ -562,7 +567,9 @@ class ServiceLoaderDialog(QDialog):
         if not selected_layer:
             return
 
-        service_type, entry, layer_name, _ = selected_layer.data(Qt.UserRole)
+        service_type, entry, layer_name, _ = selected_layer.data(
+            Qt.ItemDataRole.UserRole
+        )
         if service_type != self.current_service_type:
             service_type = self.current_service_type
 
@@ -609,7 +616,9 @@ class ServiceLoaderDialog(QDialog):
                     count_progress.setWindowTitle("Aguarde")
                     count_progress.setCancelButton(None)
                     count_progress.setMinimumDuration(0)
-                    count_progress.setWindowModality(Qt.WindowModal)
+                    count_progress.setWindowModality(
+                        Qt.WindowModality.WindowModal
+                    )
                     count_progress.show()
                     QApplication.processEvents()
                     try:
@@ -680,14 +689,14 @@ class ServiceLoaderDialog(QDialog):
         progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
         QApplication.processEvents()
 
         try:
             summary = fetch_metadata_summary(metadata_url)
             dialog = MetadataSummaryDialog(metadata_url=metadata_url, summary=summary, parent=self)
-            dialog.exec_()
+            dialog.exec()
         except Exception as error:
             QMessageBox.warning(self, "Erro", f"Falha ao carregar metadados: {error}")
         finally:
@@ -698,7 +707,7 @@ class ServiceLoaderDialog(QDialog):
         if not selected_layer:
             return None
 
-        data = selected_layer.data(Qt.UserRole)
+        data = selected_layer.data(Qt.ItemDataRole.UserRole)
         if not data:
             return None
 

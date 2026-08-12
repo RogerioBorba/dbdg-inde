@@ -20,12 +20,20 @@ Este plugin foi desenvolvido para facilitar o acesso aos serviços WMS, WFS e WC
 
 ## Instalação
 
-1. No QGIS entre no Menu Complementos para instalar o plugin ou
-2. Baixe o arquivo ZIP no Github
-3. Vá para Plugins > Gerenciar e Instalar Plugins
-4. Clique em "Instalar do ZIP"
-5. Selecione o arquivo ZIP baixado
-6. Clique em "Instalar Plugin"
+### Repositório oficial do QGIS
+
+1. No QGIS, acesse **Complementos > Gerenciar e Instalar Complementos**.
+2. Na aba **Todos**, pesquise por **IndeServicosBR**.
+3. Selecione o plugin e clique em **Instalar Complemento**.
+
+Como o plugin é uma versão estável, não é necessário habilitar a opção de exibição de complementos experimentais.
+
+### Instalação manual por ZIP
+
+1. Baixe o arquivo ZIP de uma versão publicada no GitHub.
+2. No QGIS, acesse **Complementos > Gerenciar e Instalar Complementos**.
+3. Abra a aba **Instalar a partir do ZIP**.
+4. Selecione o arquivo baixado e clique em **Instalar Complemento**.
 
 ## Uso
 
@@ -40,6 +48,14 @@ Este plugin foi desenvolvido para facilitar o acesso aos serviços WMS, WFS e WC
 
 - QGIS 3.0 ou superior
 - Conexão com a internet para acessar os serviços
+
+### Dependência do catálogo da INDE
+
+O catálogo de geosserviços é obtido em tempo de execução pela API pública da INDE:
+
+https://inde.gov.br/api/catalogo/get
+
+O plugin não exige a instalação de bibliotecas adicionais para acessar essa API. Entretanto, a listagem de instituições e serviços depende de conexão com a internet e da disponibilidade do endpoint. Caso a API esteja temporariamente indisponível, o catálogo poderá não ser carregado.
 
 ## Suporte
 

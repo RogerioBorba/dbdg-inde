@@ -165,7 +165,7 @@ def _urlopen_with_qgis(url, timeout=40, headers=None):
     timer.timeout.connect(loop.quit)
     reply.finished.connect(loop.quit)
     timer.start(int(timeout * 1000))
-    loop.exec_()
+    loop.exec()
 
     if timer.isActive():
         timer.stop()
@@ -174,8 +174,8 @@ def _urlopen_with_qgis(url, timeout=40, headers=None):
         reply.deleteLater()
         raise urllib.error.URLError(f"timed out after {timeout} seconds")
 
-    status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
-    reason = reply.attribute(QNetworkRequest.HttpReasonPhraseAttribute)
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    reason = reply.attribute(QNetworkRequest.Attribute.HttpReasonPhraseAttribute)
     final_url = reply.url().toString()
     headers = {}
     for raw_header in reply.rawHeaderList():
@@ -183,7 +183,7 @@ def _urlopen_with_qgis(url, timeout=40, headers=None):
             reply.rawHeader(raw_header)
         ).decode("utf-8", errors="ignore")
 
-    if reply.error() != QNetworkReply.NoError:
+    if reply.error() != QNetworkReply.NetworkError.NoError:
         body = bytes(reply.readAll())
         message = reply.errorString() or str(reason or "network error")
         reply.deleteLater()

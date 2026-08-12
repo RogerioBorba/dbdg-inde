@@ -40,14 +40,16 @@ class RectangleMapTool(QgsMapTool):
         self.canvas = canvas
         self.callback = callback
         self.start_point = None
-        self.rubber_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self.rubber_band = QgsRubberBand(
+            canvas, QgsWkbTypes.GeometryType.PolygonGeometry
+        )
         self.rubber_band.setColor(QColor(0, 120, 255, 90))
         self.rubber_band.setStrokeColor(QColor(0, 100, 230))
         self.rubber_band.setWidth(2)
 
     def canvasPressEvent(self, event):
         self.start_point = self.toMapCoordinates(event.pos())
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
 
     def canvasMoveEvent(self, event):
         if self.start_point is not None:
@@ -84,7 +86,7 @@ class BboxMapDialog(QDialog):
         self._bbox = None
 
         self.canvas = QgsMapCanvas(self)
-        self.canvas.setCanvasColor(Qt.white)
+        self.canvas.setCanvasColor(Qt.GlobalColor.white)
         self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
         base_layer = QgsRasterLayer(
             "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0",
@@ -99,10 +101,15 @@ class BboxMapDialog(QDialog):
         help_label = QLabel("Clique, arraste e solte no mapa para delimitar a área desejada.")
         help_label.setWordWrap(True)
         self.value_label = QLabel("Nenhum retângulo desenhado.")
-        self.value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.value_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         clear_button = QPushButton("Limpar retângulo")
         clear_button.clicked.connect(self._clear)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
 
@@ -149,7 +156,7 @@ class BboxMapDialog(QDialog):
 
     def _clear(self):
         self._bbox = None
-        self.map_tool.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.map_tool.rubber_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
         self.value_label.setText("Nenhum retângulo desenhado.")
 
     def _accept_if_valid(self):
@@ -197,7 +204,10 @@ class SpatialFilterDialog(QDialog):
         form.addRow("Geometria (WKT):", self.wkt_input)
         generate_button = QPushButton("Gerar Filter Encoding")
         generate_button.clicked.connect(self._generate)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
 
@@ -222,7 +232,7 @@ class SpatialFilterDialog(QDialog):
         gml_element = QgsOgcUtils.geometryToGML(
             geometry,
             document,
-            QgsOgcUtils.GML_3_2_1,
+            QgsOgcUtils.GMLVersion.GML_3_2_1,
             crs,
             False,
             "spatial-filter",

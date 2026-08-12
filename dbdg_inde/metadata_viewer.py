@@ -363,7 +363,9 @@ class MetadataSummaryDialog(QDialog):
         browser.setOpenExternalLinks(True)
         browser.setHtml(build_metadata_html(summary, metadata_url))
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Close, parent=self
+        )
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
 

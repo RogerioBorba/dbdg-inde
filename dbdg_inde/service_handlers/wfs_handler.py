@@ -522,9 +522,10 @@ class WfsServiceHandler(ServiceHandler):
                     "Ordem de coordenadas WFS",
                     "Parece que as coordenadas da camada WFS podem estar invertidas "
                     "(latitude/longitude).\nDeseja inverter?",
-                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
                 )
-                if answer == QMessageBox.Yes:
+                if answer == QMessageBox.StandardButton.Yes:
                     layer = self._flip_layer_coordinates(layer, layer_name)
             return layer
         except Exception as error:

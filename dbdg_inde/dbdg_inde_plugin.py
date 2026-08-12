@@ -58,7 +58,7 @@ class DbdgIndePlugin:
     def run(self):
         """Run method that performs all the real work: show loader dialog."""
         dlg = ServiceLoaderDialog(self.iface.mainWindow())
-        dlg.exec_()
+        dlg.exec()
 
     def tr(self, message):
         """Get translation for a string using QGIS translation API."""

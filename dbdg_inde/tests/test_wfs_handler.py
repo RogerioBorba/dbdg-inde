@@ -20,12 +20,13 @@ def _install_qgis_stubs():
             return None
 
     class _DummyMessageBox:
-        Yes = 1
-        No = 2
+        class StandardButton:
+            Yes = 1
+            No = 2
 
         @staticmethod
         def question(*args, **kwargs):
-            return _DummyMessageBox.No
+            return _DummyMessageBox.StandardButton.No
 
     class _Dummy:
         def __init__(self, *args, **kwargs):

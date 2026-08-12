@@ -51,7 +51,9 @@ class ServiceLoaderQgisRuntimeTest(unittest.TestCase):
         service_list = self.dialog.service_widgets[service_type]
         service_list.blockSignals(True)
         item = QListWidgetItem("Instituição teste")
-        item.setData(Qt.UserRole, {"url": "https://example.invalid/ows"})
+        item.setData(
+            Qt.ItemDataRole.UserRole, {"url": "https://example.invalid/ows"}
+        )
         service_list.addItem(item)
         service_list.setCurrentItem(item)
         service_list.blockSignals(False)
