@@ -7,7 +7,7 @@ from .base import ServiceHandler, parse_xml_safe
 class WmsServiceHandler(ServiceHandler):
     service_type = "wms"
     tab_name = "WMS"
-    availability_key = "wmsAvailable"
+    availability_key = "wmsAvalaible"
     capabilities_key = "wmsGetCapabilities"
 
     def list_layers(self, entry):

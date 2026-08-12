@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 import html.entities
 import re
-import xml.etree.ElementTree as ET
+
+from ..defusedxml import ElementTree as ET
 
 
 _NUMERIC_CHAR_REF_RE = re.compile(rb"&#(x[0-9A-Fa-f]+|\d+);")

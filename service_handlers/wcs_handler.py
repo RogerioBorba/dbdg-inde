@@ -9,7 +9,7 @@ from .base import ServiceHandler, extract_wcs_coverages, parse_xml_safe
 class WcsServiceHandler(ServiceHandler):
     service_type = "wcs"
     tab_name = "WCS"
-    availability_key = "wcsAvailable"
+    availability_key = "wcsAvalaible"
     capabilities_key = "wcsGetCapabilities"
 
     def list_layers(self, entry):

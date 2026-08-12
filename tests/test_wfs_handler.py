@@ -20,12 +20,13 @@ def _install_qgis_stubs():
             return None
 
     class _DummyMessageBox:
-        Yes = 1
-        No = 2
+        class StandardButton:
+            Yes = 1
+            No = 2
 
         @staticmethod
         def question(*args, **kwargs):
-            return _DummyMessageBox.No
+            return _DummyMessageBox.StandardButton.No
 
     class _Dummy:
         def __init__(self, *args, **kwargs):
@@ -95,6 +96,28 @@ class WfsHandlerSrsSelectionTest(unittest.TestCase):
             WfsServiceHandler._effective_output_format("application/gml+xml"),
             "application/gml+xml",
         )
+
+    def test_parses_geometry_property_from_describe_feature_type(self):
+        xml_data = b"""<?xml version="1.0"?>
+        <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                    xmlns:gml="http://www.opengis.net/gml/3.2">
+          <xsd:complexType name="CS_2009Type"><xsd:complexContent><xsd:extension>
+            <xsd:sequence>
+              <xsd:element name="gid" type="xsd:int"/>
+              <xsd:element name="the_geom" type="gml:GeometryPropertyType"/>
+            </xsd:sequence>
+          </xsd:extension></xsd:complexContent></xsd:complexType>
+        </xsd:schema>"""
+        self.assertEqual(
+            WfsServiceHandler._parse_geometry_property(xml_data),
+            "the_geom",
+        )
+
+    def test_returns_none_when_describe_feature_type_has_no_geometry(self):
+        xml_data = b"""<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+          <xsd:element name="name" type="xsd:string"/>
+        </xsd:schema>"""
+        self.assertIsNone(WfsServiceHandler._parse_geometry_property(xml_data))
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,10 +23,11 @@ from qgis.PyQt.QtWidgets import (
 from qgis.core import QgsNetworkAccessManager, QgsProject
 import unicodedata
 
-from .catalog_client import fetch_catalog
+from .catalog_client import fetch_catalog, service_is_available
 from .metadata_viewer import MetadataSummaryDialog, fetch_metadata_summary
 from .network_utils import describe_ssl_context
 from .service_handlers import build_service_handlers
+from .wfs_filter_dialogs import BboxMapDialog, SpatialFilterDialog
 
 
 class DownloadSpinnerDialog(QDialog):
@@ -34,14 +35,14 @@ class DownloadSpinnerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Aguarde")
         self.setModal(True)
-        self.setWindowModality(Qt.WindowModal)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumWidth(360)
 
         self._frames = ["|", "/", "-", "\\"]
         self._frame_index = 0
 
         self.spinner_label = QLabel(self._frames[0])
-        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.spinner_label.setMinimumWidth(18)
 
         self.message_label = QLabel()
@@ -100,14 +101,14 @@ class WfsFeatureProgressDialog(QDialog):
         self._downloaded_features = 0
         self.setWindowTitle("Aguarde")
         self.setModal(True)
-        self.setWindowModality(Qt.WindowModal)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumWidth(420)
 
         self._frames = ["|", "/", "-", "\\"]
         self._frame_index = 0
 
         self.spinner_label = QLabel(self._frames[0])
-        self.spinner_label.setAlignment(Qt.AlignCenter)
+        self.spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.spinner_label.setMinimumWidth(18)
 
         self.message_label = QLabel()
@@ -206,7 +207,7 @@ class NetworkDownloadTracker:
             try:
                 request_url = arg.request().url().toString().lower()
                 request_id = arg.requestId()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError):
                 continue
 
             if any(
@@ -236,7 +237,7 @@ class ServiceLoaderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Carregador de servicos OGC da INDE")
-        self.resize(800, 500)
+        self.resize(900, 650)
 
         self.handlers = build_service_handlers()
         self.service_widgets = {}
@@ -252,12 +253,19 @@ class ServiceLoaderDialog(QDialog):
         self.format_combo.addItems(["GML (padrao)", "Shapefile (zip)", "JSON"])
         self.wfs_startindex_input = QLineEdit()
         self.wfs_count_input = QLineEdit()
+        self.wfs_bbox_input = QLineEdit()
+        self.wfs_bbox_map_button = QPushButton("Desenhar BBOX no mapa")
+        self.wfs_advanced_filter_button = QPushButton("Criar filtro espacial avançado")
+        self.wfs_filter_encoding = ""
         self.load_button = QPushButton("Adicionar camada ao projeto")
         self.metadata_button = QPushButton("Ver metadados")
         self.load_button.setEnabled(False)
         self.metadata_button.setEnabled(False)
         self.wfs_startindex_input.setEnabled(False)
         self.wfs_count_input.setEnabled(False)
+        self.wfs_bbox_input.setEnabled(False)
+        self.wfs_bbox_map_button.setEnabled(False)
+        self.wfs_advanced_filter_button.setEnabled(False)
 
         self._build_ui()
         self._wire_events()
@@ -268,6 +276,7 @@ class ServiceLoaderDialog(QDialog):
         self.layer_filter_input.setPlaceholderText("Filtrar camadas por nome...")
         self.wfs_startindex_input.setPlaceholderText("Ex.: 0")
         self.wfs_count_input.setPlaceholderText("Ex.: 100")
+        self.wfs_bbox_input.setPlaceholderText("minx,miny,maxx,maxy[,crs]")
 
         for service_type in ("wms", "wfs", "wcs"):
             handler = self.handlers[service_type]
@@ -289,12 +298,32 @@ class ServiceLoaderDialog(QDialog):
         right_layout.addWidget(QLabel("Camadas disponiveis"))
         right_layout.addWidget(self.layer_filter_input)
         right_layout.addWidget(self.layer_list)
-        right_layout.addWidget(QLabel("Formato (apenas WFS):"))
+
+        self.wfs_format_label = QLabel("Formato (apenas WFS):")
+        self.wfs_startindex_label = QLabel("A partir da posição (WFS 2.0 - opcional):")
+        self.wfs_count_label = QLabel("Qtd de Feições (WFS 2.0 - opcional):")
+        self.wfs_bbox_label = QLabel("Área de interesse — BBOX (opcional):")
+        self.wfs_startindex_input.setToolTip(
+            "Posição da primeira feição que será baixada. Use 0 para começar do início."
+        )
+        self.wfs_count_input.setToolTip(
+            "Quantidade máxima de feições que serão baixadas."
+        )
+        self.wfs_bbox_input.setToolTip(
+            "Limita o resultado a uma área: minx,miny,maxx,maxy e, opcionalmente, o CRS."
+        )
+        right_layout.addWidget(self.wfs_format_label)
         right_layout.addWidget(self.format_combo)
-        right_layout.addWidget(QLabel("STARTINDEX (WFS 2.0 - opcional):"))
+        right_layout.addWidget(self.wfs_startindex_label)
         right_layout.addWidget(self.wfs_startindex_input)
-        right_layout.addWidget(QLabel("COUNT (WFS 2.0 - opcional):"))
+        right_layout.addWidget(self.wfs_count_label)
         right_layout.addWidget(self.wfs_count_input)
+        right_layout.addWidget(self.wfs_bbox_label)
+        right_layout.addWidget(self.wfs_bbox_input)
+        bbox_buttons = QHBoxLayout()
+        bbox_buttons.addWidget(self.wfs_bbox_map_button)
+        bbox_buttons.addWidget(self.wfs_advanced_filter_button)
+        right_layout.addLayout(bbox_buttons)
         right_layout.addWidget(self.metadata_button)
         right_layout.addWidget(self.load_button)
 
@@ -310,10 +339,48 @@ class ServiceLoaderDialog(QDialog):
             )
         self.filter_input.textChanged.connect(self.apply_catalog_filter)
         self.layer_filter_input.textChanged.connect(self.apply_layer_filter)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.layer_list.itemSelectionChanged.connect(self.update_load_button)
         self.layer_list.itemDoubleClicked.connect(self.on_layer_double_clicked)
         self.metadata_button.clicked.connect(self.open_metadata)
         self.load_button.clicked.connect(self.add_layer)
+        self.wfs_bbox_map_button.clicked.connect(self.open_bbox_map)
+        self.wfs_advanced_filter_button.clicked.connect(self.open_advanced_filter)
+        self._on_tab_changed(self.tabs.currentIndex())
+
+    def _on_tab_changed(self, tab_index):
+        self._update_wfs_options_visibility(tab_index)
+
+        if not 0 <= tab_index < self.tabs.count():
+            return
+
+        service_type = self.tabs.tabText(tab_index).lower()
+        if service_type not in self.service_widgets:
+            return
+
+        # Keep the layer panel tied to the active service tab.  show_layers
+        # clears the previous result before optionally loading the institution
+        # already selected in the newly active tab.
+        self.show_layers(service_type)
+
+    def _update_wfs_options_visibility(self, tab_index):
+        is_wfs_tab = (
+            0 <= tab_index < self.tabs.count()
+            and self.tabs.tabText(tab_index) == "WFS"
+        )
+        for widget in (
+            self.wfs_format_label,
+            self.format_combo,
+            self.wfs_startindex_label,
+            self.wfs_startindex_input,
+            self.wfs_count_label,
+            self.wfs_count_input,
+            self.wfs_bbox_label,
+            self.wfs_bbox_input,
+            self.wfs_bbox_map_button,
+            self.wfs_advanced_filter_button,
+        ):
+            widget.setVisible(is_wfs_tab)
 
     def load_catalog(self):
         try:
@@ -341,15 +408,17 @@ class ServiceLoaderDialog(QDialog):
                 continue
 
             for service_type, handler in self.handlers.items():
-                if entry.get(handler.availability_key):
+                if service_is_available(entry, service_type):
                     item = QListWidgetItem(description)
-                    item.setData(Qt.UserRole, entry)
+                    item.setData(Qt.ItemDataRole.UserRole, entry)
                     self.service_widgets[service_type].addItem(item)
 
         self.layer_list.clear()
         self.current_layers = []
         self.load_button.setEnabled(False)
         self.metadata_button.setEnabled(False)
+        self.wfs_bbox_map_button.setEnabled(False)
+        self.wfs_advanced_filter_button.setEnabled(False)
 
     def show_layers(self, service_type):
         self.current_service_type = service_type
@@ -360,12 +429,14 @@ class ServiceLoaderDialog(QDialog):
         self.format_combo.setEnabled(service_type == "wfs")
         self.wfs_startindex_input.setEnabled(service_type == "wfs")
         self.wfs_count_input.setEnabled(service_type == "wfs")
+        self.wfs_bbox_input.setEnabled(service_type == "wfs")
+        self._update_wfs_filter_buttons()
 
         selected_service = self.service_widgets[service_type].currentItem()
         if not selected_service:
             return
 
-        entry = selected_service.data(Qt.UserRole)
+        entry = selected_service.data(Qt.ItemDataRole.UserRole)
         handler = self.handlers[service_type]
 
         progress = QProgressDialog(
@@ -378,7 +449,7 @@ class ServiceLoaderDialog(QDialog):
         progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setValue(0)
         progress.show()
         QApplication.processEvents()
@@ -400,11 +471,61 @@ class ServiceLoaderDialog(QDialog):
 
         self.apply_layer_filter()
 
+    def open_bbox_map(self):
+        dialog = BboxMapDialog(self.wfs_bbox_input.text().strip(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.wfs_bbox_input.setText(dialog.bbox_text())
+            self.wfs_filter_encoding = ""
+            self.wfs_advanced_filter_button.setText("Criar filtro espacial avançado")
+
+    def open_advanced_filter(self):
+        selected = self.layer_list.currentItem()
+        if not selected:
+            return
+        service_type, entry, layer_name, _metadata_url = selected.data(
+            Qt.ItemDataRole.UserRole
+        )
+        if service_type != "wfs":
+            return
+
+        geometry_property = ""
+        progress = QProgressDialog(
+            "Consultando a propriedade geométrica da camada...", "", 0, 0, self
+        )
+        progress.setWindowTitle("Aguarde")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            geometry_property = self.handlers["wfs"].get_geometry_property(entry, layer_name)
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "Filtro espacial",
+                "Não foi possível identificar automaticamente a propriedade geométrica. "
+                f"Informe-a manualmente.\n\nDetalhes: {error}",
+            )
+        finally:
+            progress.close()
+
+        dialog = SpatialFilterDialog(
+            self.wfs_filter_encoding,
+            geometry_property=geometry_property or "the_geom",
+            parent=self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.wfs_filter_encoding = dialog.filter_text()
+            self.wfs_bbox_input.clear()
+            self.wfs_advanced_filter_button.setText("Editar filtro espacial avançado")
+
     def apply_layer_filter(self):
         filter_text = self._normalize_filter_text(self.layer_filter_input.text())
         self.layer_list.clear()
         self.load_button.setEnabled(False)
         self.metadata_button.setEnabled(False)
+        self._update_wfs_filter_buttons()
 
         for service_type, entry, layer_name, layer_title, metadata_url in self.current_layers:
             normalized_title = self._normalize_filter_text(layer_title)
@@ -413,7 +534,10 @@ class ServiceLoaderDialog(QDialog):
                 continue
 
             item = QListWidgetItem(layer_title)
-            item.setData(Qt.UserRole, (service_type, entry, layer_name, metadata_url))
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                (service_type, entry, layer_name, metadata_url),
+            )
             self.layer_list.addItem(item)
 
     def update_load_button(self):
@@ -421,6 +545,18 @@ class ServiceLoaderDialog(QDialog):
         self.load_button.setEnabled(bool(selected))
         metadata_url = self._get_selected_metadata_url()
         self.metadata_button.setEnabled(bool(metadata_url))
+        self._update_wfs_filter_buttons()
+
+    def _update_wfs_filter_buttons(self):
+        selected = self.layer_list.currentItem()
+        is_wfs_layer = False
+        if selected:
+            data = selected.data(Qt.ItemDataRole.UserRole)
+            is_wfs_layer = bool(
+                data and data[0] == "wfs" and self.current_service_type == "wfs"
+            )
+        self.wfs_bbox_map_button.setEnabled(is_wfs_layer)
+        self.wfs_advanced_filter_button.setEnabled(is_wfs_layer)
 
     def on_layer_double_clicked(self, item):
         self.layer_list.setCurrentItem(item)
@@ -431,7 +567,9 @@ class ServiceLoaderDialog(QDialog):
         if not selected_layer:
             return
 
-        service_type, entry, layer_name, _ = selected_layer.data(Qt.UserRole)
+        service_type, entry, layer_name, _ = selected_layer.data(
+            Qt.ItemDataRole.UserRole
+        )
         if service_type != self.current_service_type:
             service_type = self.current_service_type
 
@@ -454,6 +592,9 @@ class ServiceLoaderDialog(QDialog):
             return
         if count is None and self.wfs_count_input.text().strip():
             return
+        bbox = self._parse_bbox(self.wfs_bbox_input.text())
+        if bbox is None and self.wfs_bbox_input.text().strip():
+            return
 
         try:
             progress = None
@@ -475,7 +616,9 @@ class ServiceLoaderDialog(QDialog):
                     count_progress.setWindowTitle("Aguarde")
                     count_progress.setCancelButton(None)
                     count_progress.setMinimumDuration(0)
-                    count_progress.setWindowModality(Qt.WindowModal)
+                    count_progress.setWindowModality(
+                        Qt.WindowModality.WindowModal
+                    )
                     count_progress.show()
                     QApplication.processEvents()
                     try:
@@ -484,6 +627,8 @@ class ServiceLoaderDialog(QDialog):
                             layer_name=layer_name,
                             startindex=startindex,
                             count=count,
+                            bbox=bbox,
+                            filter_encoding=self.wfs_filter_encoding,
                         )
                     finally:
                         count_progress.close()
@@ -508,6 +653,8 @@ class ServiceLoaderDialog(QDialog):
                     "format_text": self.format_combo.currentText(),
                     "startindex": startindex,
                     "count": count,
+                    "bbox": bbox,
+                    "filter_encoding": self.wfs_filter_encoding,
                     "feature_count": total_features,
                     "progress_callback": progress.set_downloaded_bytes,
                     "feature_progress_callback": feature_count_callback,
@@ -542,14 +689,14 @@ class ServiceLoaderDialog(QDialog):
         progress.setWindowTitle("Aguarde")
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
         QApplication.processEvents()
 
         try:
             summary = fetch_metadata_summary(metadata_url)
             dialog = MetadataSummaryDialog(metadata_url=metadata_url, summary=summary, parent=self)
-            dialog.exec_()
+            dialog.exec()
         except Exception as error:
             QMessageBox.warning(self, "Erro", f"Falha ao carregar metadados: {error}")
         finally:
@@ -560,7 +707,7 @@ class ServiceLoaderDialog(QDialog):
         if not selected_layer:
             return None
 
-        data = selected_layer.data(Qt.UserRole)
+        data = selected_layer.data(Qt.ItemDataRole.UserRole)
         if not data:
             return None
 
@@ -615,3 +762,27 @@ class ServiceLoaderDialog(QDialog):
             QMessageBox.warning(self, "Erro", f"{label} deve ser maior ou igual a {minimum}.")
             return None
         return parsed
+
+    def _parse_bbox(self, raw_value):
+        value = (raw_value or "").strip()
+        if not value:
+            return None
+        parts = [part.strip() for part in value.split(",")]
+        if len(parts) not in (4, 5):
+            QMessageBox.warning(
+                self, "BBOX", "Use o formato minx,miny,maxx,maxy[,crs]."
+            )
+            return None
+        try:
+            coordinates = [float(part) for part in parts[:4]]
+        except ValueError:
+            QMessageBox.warning(self, "BBOX", "As quatro coordenadas do BBOX devem ser numéricas.")
+            return None
+        minx, miny, maxx, maxy = coordinates
+        if minx >= maxx or miny >= maxy:
+            QMessageBox.warning(
+                self, "BBOX", "Os valores mínimos do BBOX devem ser menores que os máximos."
+            )
+            return None
+        crs = parts[4] if len(parts) == 5 else None
+        return ",".join([format(number, ".15g") for number in coordinates] + ([crs] if crs else []))

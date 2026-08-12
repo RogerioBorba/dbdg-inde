@@ -3,6 +3,7 @@ import os
 import ssl
 import sys
 import urllib.error
+from urllib.parse import urlparse
 import urllib.request
 
 
@@ -65,23 +66,26 @@ def _candidate_ca_directories():
         ]
     )
 
+    qgis_roots = ()
     try:
         from qgis.core import QgsApplication
 
-        for qgis_root in (QgsApplication.prefixPath(), QgsApplication.pkgDataPath()):
-            if qgis_root:
-                paths.extend(
-                    [
-                        qgis_root,
-                        os.path.join(qgis_root, "bin"),
-                        os.path.join(qgis_root, "resources"),
-                        os.path.join(qgis_root, "resources", "ssl"),
-                        os.path.join(qgis_root, "resources", "ssl", "certs"),
-                        os.path.join(qgis_root, "certs"),
-                    ]
-                )
-    except Exception:
-        pass
+        qgis_roots = (QgsApplication.prefixPath(), QgsApplication.pkgDataPath())
+    except (ImportError, RuntimeError):
+        qgis_roots = ()
+
+    for qgis_root in qgis_roots:
+        if qgis_root:
+            paths.extend(
+                [
+                    qgis_root,
+                    os.path.join(qgis_root, "bin"),
+                    os.path.join(qgis_root, "resources"),
+                    os.path.join(qgis_root, "resources", "ssl"),
+                    os.path.join(qgis_root, "resources", "ssl", "certs"),
+                    os.path.join(qgis_root, "certs"),
+                ]
+            )
 
     seen = set()
     for path in paths:
@@ -103,14 +107,16 @@ def _ca_bundle_path():
     if existing:
         return existing
 
+    certifi_path = None
     try:
         import certifi
 
-        existing = _existing_file(certifi.where())
-        if existing:
-            return existing
-    except Exception:
-        pass
+        certifi_path = certifi.where()
+    except (ImportError, OSError):
+        certifi_path = None
+    existing = _existing_file(certifi_path)
+    if existing:
+        return existing
 
     verify_paths = ssl.get_default_verify_paths()
     for candidate in (verify_paths.cafile, verify_paths.openssl_cafile):
@@ -134,12 +140,23 @@ def create_ssl_context():
     return ssl.create_default_context()
 
 
-def _urlopen_with_qgis(url, timeout=40):
+def _urlopen_with_qgis(url, timeout=40, headers=None):
     from qgis.PyQt.QtCore import QEventLoop, QTimer, QUrl
     from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
     from qgis.core import QgsNetworkAccessManager
 
     request = QNetworkRequest(QUrl(url))
+    for name, value in (headers or {}).items():
+        request.setRawHeader(str(name).encode("ascii"), str(value).encode("utf-8"))
+
+    # QGIS 3.44 uses a newer Qt network stack.  Make redirect handling explicit
+    # while retaining compatibility with the older Qt versions supported by the
+    # plugin.
+    redirect_attribute = getattr(QNetworkRequest, "RedirectPolicyAttribute", None)
+    redirect_policy = getattr(QNetworkRequest, "NoLessSafeRedirectPolicy", None)
+    if redirect_attribute is not None and redirect_policy is not None:
+        request.setAttribute(redirect_attribute, redirect_policy)
+
     reply = QgsNetworkAccessManager.instance().get(request)
 
     loop = QEventLoop()
@@ -148,7 +165,7 @@ def _urlopen_with_qgis(url, timeout=40):
     timer.timeout.connect(loop.quit)
     reply.finished.connect(loop.quit)
     timer.start(int(timeout * 1000))
-    loop.exec_()
+    loop.exec()
 
     if timer.isActive():
         timer.stop()
@@ -157,8 +174,8 @@ def _urlopen_with_qgis(url, timeout=40):
         reply.deleteLater()
         raise urllib.error.URLError(f"timed out after {timeout} seconds")
 
-    status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
-    reason = reply.attribute(QNetworkRequest.HttpReasonPhraseAttribute)
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    reason = reply.attribute(QNetworkRequest.Attribute.HttpReasonPhraseAttribute)
     final_url = reply.url().toString()
     headers = {}
     for raw_header in reply.rawHeaderList():
@@ -166,7 +183,7 @@ def _urlopen_with_qgis(url, timeout=40):
             reply.rawHeader(raw_header)
         ).decode("utf-8", errors="ignore")
 
-    if reply.error() != QNetworkReply.NoError:
+    if reply.error() != QNetworkReply.NetworkError.NoError:
         body = bytes(reply.readAll())
         message = reply.errorString() or str(reason or "network error")
         reply.deleteLater()
@@ -183,13 +200,47 @@ def _urlopen_with_qgis(url, timeout=40):
     return MemoryResponse(body, url=final_url, status=int(status) if status else None, headers=headers)
 
 
+def _validate_http_url(url):
+    parsed_url = urlparse(str(url))
+    allowed_schemes = {"http", "https"}
+    if parsed_url.scheme.lower() not in allowed_schemes:
+        raise ValueError(f"Unsupported URL scheme: {parsed_url.scheme}")
+    if not parsed_url.netloc:
+        raise ValueError("URL must include a network location")
+    return str(url)
+
+
+def _python_urlopen_http(url, context, timeout=40, **kwargs):
+    data = kwargs.pop("data", None)
+    headers = kwargs.pop("headers", None) or {}
+    if kwargs:
+        unexpected = ", ".join(sorted(kwargs))
+        raise TypeError(f"Unsupported urlopen argument(s): {unexpected}")
+
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context))
+    request = urllib.request.Request(url, data=data, headers=headers)
+    return opener.open(request, timeout=timeout)
+
+
 def urlopen(url, timeout=40, **kwargs):
-    kwargs.pop("context", None)
-    try:
-        return _urlopen_with_qgis(url, timeout=timeout)
-    except ImportError:
-        context = create_ssl_context()
-        return urllib.request.urlopen(url, context=context, timeout=timeout, **kwargs)
+    context = kwargs.pop("context", None)
+    use_qgis = kwargs.pop("use_qgis", True)
+    headers = kwargs.pop("headers", None)
+    safe_url = _validate_http_url(url)
+    if use_qgis:
+        try:
+            return _urlopen_with_qgis(safe_url, timeout=timeout, headers=headers)
+        except ImportError:
+            pass
+
+    context = context or create_ssl_context()
+    return _python_urlopen_http(
+        safe_url,
+        context=context,
+        timeout=timeout,
+        headers=headers,
+        **kwargs,
+    )
 
 
 def describe_ssl_context():

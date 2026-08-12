@@ -1,5 +1,7 @@
 import unittest
 
+from ..defusedxml.common import DefusedXmlException
+
 from ..service_handlers.base import parse_xml_safe
 
 
@@ -18,6 +20,16 @@ class ParseXmlSafeTest(unittest.TestCase):
         malformed = b"<root><a>x&nbsp;y</a></root>"
         root = parse_xml_safe(malformed)
         self.assertEqual(root.find("a").text, "x\xa0y")
+
+    def test_rejects_entity_expansion(self):
+        malicious = b"""<!DOCTYPE root [
+        <!ENTITY xxe SYSTEM "file:///etc/passwd">
+        ]>
+        <root>&xxe;</root>
+        """
+
+        with self.assertRaises(DefusedXmlException):
+            parse_xml_safe(malicious)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@ import tempfile
 import urllib.error
 import urllib.parse
 import zipfile
-import xml.etree.ElementTree as ET
+
+from ..defusedxml import ElementTree as ET
 
 from qgis.PyQt.QtWidgets import QApplication, QMessageBox
 from qgis.core import QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsVectorLayer, QgsWkbTypes
@@ -16,7 +17,7 @@ from .base import ServiceHandler, parse_xml_safe
 class WfsServiceHandler(ServiceHandler):
     service_type = "wfs"
     tab_name = "WFS"
-    availability_key = "wfsAvailable"
+    availability_key = "wfsAvalaible"
     capabilities_key = "wfsGetCapabilities"
 
     FORMAT_MAP = {
@@ -83,6 +84,8 @@ class WfsServiceHandler(ServiceHandler):
         selected_format = (options or {}).get("format_text", "GML (padrao)")
         startindex = (options or {}).get("startindex")
         count = (options or {}).get("count")
+        bbox = (options or {}).get("bbox")
+        filter_encoding = (options or {}).get("filter_encoding")
         progress_callback = (options or {}).get("progress_callback")
         feature_progress_callback = (options or {}).get("feature_progress_callback")
         feature_count = (options or {}).get("feature_count")
@@ -90,7 +93,9 @@ class WfsServiceHandler(ServiceHandler):
         output_format = self._effective_output_format(requested_output_format)
         effective_count = feature_count
         if effective_count is None:
-            effective_count = self._resolve_effective_count(service_url, layer_name, startindex, count)
+            effective_count = self._resolve_effective_count(
+                service_url, layer_name, startindex, count, bbox, filter_encoding
+            )
         QApplication.processEvents()
         if effective_count > 5000:
             return self._create_paginated_layer(
@@ -99,6 +104,8 @@ class WfsServiceHandler(ServiceHandler):
                 output_format,
                 effective_count,
                 startindex=startindex,
+                bbox=bbox,
+                filter_encoding=filter_encoding,
                 progress_callback=progress_callback,
                 feature_progress_callback=feature_progress_callback,
                 parent=parent,
@@ -110,6 +117,8 @@ class WfsServiceHandler(ServiceHandler):
             output_format,
             startindex=startindex,
             count=count,
+            bbox=bbox,
+            filter_encoding=filter_encoding,
             progress_callback=progress_callback,
         )
 
@@ -122,15 +131,68 @@ class WfsServiceHandler(ServiceHandler):
             return self._load_json(temp_file, layer_name, fallback_crs_authid)
         return self._load_gml(temp_file, layer_name, fallback_crs_authid)
 
-    def get_feature_count(self, entry, layer_name, startindex=None, count=None):
+    def get_feature_count(
+        self, entry, layer_name, startindex=None, count=None, bbox=None, filter_encoding=None
+    ):
         service_url = entry.get("url")
-        return self._resolve_effective_count(service_url, layer_name, startindex, count)
+        return self._resolve_effective_count(
+            service_url, layer_name, startindex, count, bbox, filter_encoding
+        )
 
-    def _resolve_effective_count(self, service_url, layer_name, startindex=None, count=None):
+    def get_geometry_property(self, entry, layer_name, timeout=30):
+        """Return the geometry property declared by DescribeFeatureType."""
+        service_url = entry.get("url")
+        if not service_url:
+            return None
+        params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "DescribeFeatureType",
+            "typeNames": layer_name,
+        }
+        request_url = self._build_url(service_url, params)
+        context = create_ssl_context()
+        with urlopen(request_url, context=context, timeout=timeout) as response:
+            return self._parse_geometry_property(response.read())
+
+    @staticmethod
+    def _parse_geometry_property(xml_data):
+        try:
+            root = parse_xml_safe(xml_data)
+        except ET.ParseError:
+            return None
+
+        for element in root.iter():
+            if element.tag.split("}", 1)[-1] != "element":
+                continue
+            property_type = (element.get("type") or "").lower()
+            property_name = element.get("name")
+            if property_name and (
+                "geometrypropertytype" in property_type
+                or "pointpropertytype" in property_type
+                or "curvepropertytype" in property_type
+                or "linestringpropertytype" in property_type
+                or "surfacepropertytype" in property_type
+                or "polygonpropertytype" in property_type
+                or "multigeometrypropertytype" in property_type
+                or "multipointpropertytype" in property_type
+                or "multicurvepropertytype" in property_type
+                or "multilinestringpropertytype" in property_type
+                or "multisurfacepropertytype" in property_type
+                or "multipolygonpropertytype" in property_type
+            ):
+                return property_name
+        return None
+
+    def _resolve_effective_count(
+        self, service_url, layer_name, startindex=None, count=None, bbox=None, filter_encoding=None
+    ):
         if startindex is not None and count is not None:
             return max(0, count)
 
-        total_count = self._fetch_feature_count(service_url, layer_name)
+        total_count = self._fetch_feature_count(
+            service_url, layer_name, bbox=bbox, filter_encoding=filter_encoding
+        )
         if total_count is None:
             raise Exception("Nao foi possivel determinar a quantidade de feicoes da camada.")
 
@@ -142,7 +204,9 @@ class WfsServiceHandler(ServiceHandler):
             return remaining
         return max(0, min(remaining, count))
 
-    def _fetch_feature_count(self, url, layer_name, timeout=30):
+    def _fetch_feature_count(
+        self, url, layer_name, bbox=None, filter_encoding=None, timeout=30
+    ):
         context = create_ssl_context()
         base_params = {
             "service": "WFS",
@@ -151,6 +215,10 @@ class WfsServiceHandler(ServiceHandler):
             "typeNames": layer_name,
             "resultType": "hits",
         }
+        if bbox:
+            base_params["BBOX"] = bbox
+        if filter_encoding:
+            base_params["FILTER"] = filter_encoding
 
         for include_srs in (True, False):
             params = dict(base_params)
@@ -193,6 +261,8 @@ class WfsServiceHandler(ServiceHandler):
         output_format,
         total_features,
         startindex=None,
+        bbox=None,
+        filter_encoding=None,
         progress_callback=None,
         feature_progress_callback=None,
         parent=None,
@@ -219,6 +289,8 @@ class WfsServiceHandler(ServiceHandler):
                 output_format,
                 startindex=current_start,
                 count=current_count,
+                bbox=bbox,
+                filter_encoding=filter_encoding,
                 progress_callback=chunk_progress_callback,
             )
             if not temp_file:
@@ -253,6 +325,8 @@ class WfsServiceHandler(ServiceHandler):
         output_format,
         startindex=None,
         count=None,
+        bbox=None,
+        filter_encoding=None,
         progress_callback=None,
         timeout=60,
     ):
@@ -268,6 +342,10 @@ class WfsServiceHandler(ServiceHandler):
             base_params["STARTINDEX"] = startindex
         if count is not None:
             base_params["COUNT"] = count
+        if bbox:
+            base_params["BBOX"] = bbox
+        if filter_encoding:
+            base_params["FILTER"] = filter_encoding
 
         if "gml" in output_format.lower():
             output_formats = [
@@ -366,8 +444,8 @@ class WfsServiceHandler(ServiceHandler):
             body_preview = ""
             try:
                 body_preview = error.read(300).decode("utf-8", errors="ignore")
-            except Exception:
-                pass
+            except (AttributeError, OSError, ValueError):
+                body_preview = "<response body unavailable>"
             print(f"[WFS] HTTP {error.code}: {error.reason}. Body preview: {body_preview}")
             return None
         except Exception as error:
@@ -444,9 +522,10 @@ class WfsServiceHandler(ServiceHandler):
                     "Ordem de coordenadas WFS",
                     "Parece que as coordenadas da camada WFS podem estar invertidas "
                     "(latitude/longitude).\nDeseja inverter?",
-                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
                 )
-                if answer == QMessageBox.Yes:
+                if answer == QMessageBox.StandardButton.Yes:
                     layer = self._flip_layer_coordinates(layer, layer_name)
             return layer
         except Exception as error:
