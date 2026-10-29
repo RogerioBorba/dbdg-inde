@@ -27,7 +27,8 @@ from .catalog_client import fetch_catalog, service_is_available
 from .metadata_viewer import MetadataSummaryDialog, fetch_metadata_summary
 from .network_utils import describe_ssl_context
 from .service_handlers import build_service_handlers
-from .wfs_filter_dialogs import BboxMapDialog, SpatialFilterDialog
+from .wfs_filter_dialogs import BboxMapDialog, SpatialFilterDialog, AttributeFilterDialog
+from .wfs_attribute_filter import combine_filters
 
 
 class DownloadSpinnerDialog(QDialog):
@@ -256,6 +257,11 @@ class ServiceLoaderDialog(QDialog):
         self.wfs_bbox_input = QLineEdit()
         self.wfs_bbox_map_button = QPushButton("Desenhar BBOX no mapa")
         self.wfs_advanced_filter_button = QPushButton("Criar filtro espacial avançado")
+        self.wfs_attribute_button = QPushButton("Filtrar por atributo")
+        self.wfs_attribute_clear_button = QPushButton("Limpar atributo")
+        self.wfs_attribute_button.setEnabled(False)
+        self.wfs_attribute_clear_button.setEnabled(False)
+        self.wfs_attribute_filters = {}
         self.wfs_filter_encoding = ""
         self.load_button = QPushButton("Adicionar camada ao projeto")
         self.metadata_button = QPushButton("Ver metadados")
@@ -324,6 +330,10 @@ class ServiceLoaderDialog(QDialog):
         bbox_buttons.addWidget(self.wfs_bbox_map_button)
         bbox_buttons.addWidget(self.wfs_advanced_filter_button)
         right_layout.addLayout(bbox_buttons)
+        attribute_buttons = QHBoxLayout()
+        attribute_buttons.addWidget(self.wfs_attribute_button)
+        attribute_buttons.addWidget(self.wfs_attribute_clear_button)
+        right_layout.addLayout(attribute_buttons)
         right_layout.addWidget(self.metadata_button)
         right_layout.addWidget(self.load_button)
 
@@ -344,6 +354,8 @@ class ServiceLoaderDialog(QDialog):
         self.layer_list.itemDoubleClicked.connect(self.on_layer_double_clicked)
         self.metadata_button.clicked.connect(self.open_metadata)
         self.load_button.clicked.connect(self.add_layer)
+        self.wfs_attribute_button.clicked.connect(self.open_attribute_filter)
+        self.wfs_attribute_clear_button.clicked.connect(self.clear_attribute_filter)
         self.wfs_bbox_map_button.clicked.connect(self.open_bbox_map)
         self.wfs_advanced_filter_button.clicked.connect(self.open_advanced_filter)
         self._on_tab_changed(self.tabs.currentIndex())
@@ -379,6 +391,8 @@ class ServiceLoaderDialog(QDialog):
             self.wfs_bbox_input,
             self.wfs_bbox_map_button,
             self.wfs_advanced_filter_button,
+            self.wfs_attribute_button,
+            self.wfs_attribute_clear_button,
         ):
             widget.setVisible(is_wfs_tab)
 
@@ -471,6 +485,42 @@ class ServiceLoaderDialog(QDialog):
 
         self.apply_layer_filter()
 
+    def _attribute_key(self):
+        selected = self.layer_list.currentItem()
+        if not selected:
+            return None
+        service_type, entry, layer_name, _ = selected.data(Qt.ItemDataRole.UserRole)
+        return (entry.get('url'), layer_name) if service_type == 'wfs' else None
+
+    def clear_attribute_filter(self):
+        self.wfs_attribute_filters.pop(self._attribute_key(), None)
+        self._update_wfs_filter_buttons()
+
+    def open_attribute_filter(self):
+        key = self._attribute_key()
+        if key is None:
+            return
+        _, entry, layer_name, _ = self.layer_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        progress = QProgressDialog('Consultando atributos da camada...', '', 0, 0, self)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            fields = self.handlers['wfs'].get_attribute_fields(entry, layer_name)
+        except Exception as error:
+            QMessageBox.warning(self, 'Filtro por atributo', f'Não foi possível consultar os atributos.\n{error}')
+            return
+        finally:
+            progress.close()
+        if not fields:
+            QMessageBox.information(self, 'Filtro por atributo', 'O serviço não informou campos de texto ou numéricos compatíveis.')
+            return
+        dialog = AttributeFilterDialog(fields, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.wfs_attribute_filters[key] = (dialog.condition(), dialog.filter_text())
+            self._update_wfs_filter_buttons()
+
     def open_bbox_map(self):
         dialog = BboxMapDialog(self.wfs_bbox_input.text().strip(), self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -557,6 +607,14 @@ class ServiceLoaderDialog(QDialog):
             )
         self.wfs_bbox_map_button.setEnabled(is_wfs_layer)
         self.wfs_advanced_filter_button.setEnabled(is_wfs_layer)
+        self.wfs_attribute_button.setEnabled(is_wfs_layer)
+        key = self._attribute_key() if is_wfs_layer else None
+        active = key in self.wfs_attribute_filters
+        self.wfs_attribute_clear_button.setEnabled(active)
+        self.wfs_attribute_button.setText('Novo filtro por atributo' if active else 'Filtrar por atributo')
+        self.wfs_attribute_button.setToolTip(
+            'Campo: {}; operador: {}; valor: {}'.format(*self.wfs_attribute_filters[key][0])
+            if active else 'Adicionar uma condição de texto ou número à camada selecionada.')
 
     def on_layer_double_clicked(self, item):
         self.layer_list.setCurrentItem(item)
@@ -596,9 +654,17 @@ class ServiceLoaderDialog(QDialog):
         if bbox is None and self.wfs_bbox_input.text().strip():
             return
 
+        progress = None
+        network_tracker = None
         try:
-            progress = None
-            network_tracker = None
+            filter_encoding = self.wfs_filter_encoding
+            if service_type == 'wfs':
+                attribute = self.wfs_attribute_filters.get((entry.get('url'), layer_name))
+                if attribute:
+                    geometry_property = handler.get_geometry_property(entry, layer_name) if bbox else None
+                    filter_encoding = combine_filters(filter_encoding, attribute[1], bbox=bbox,
+                                                      geometry_property=geometry_property)
+                    bbox = None
             feature_count_callback = None
             total_features = None
 
@@ -628,11 +694,16 @@ class ServiceLoaderDialog(QDialog):
                             startindex=startindex,
                             count=count,
                             bbox=bbox,
-                            filter_encoding=self.wfs_filter_encoding,
+                            filter_encoding=filter_encoding,
                         )
                     finally:
                         count_progress.close()
 
+                if total_features == 0:
+                    QMessageBox.information(
+                        self, "Sem resultados",
+                        "Nenhuma feição foi encontrada para os filtros e limites informados.")
+                    return
                 if total_features > 5000:
                     progress = WfsFeatureProgressDialog(total_features, self)
                     feature_count_callback = progress.update_feature_progress
@@ -654,7 +725,7 @@ class ServiceLoaderDialog(QDialog):
                     "startindex": startindex,
                     "count": count,
                     "bbox": bbox,
-                    "filter_encoding": self.wfs_filter_encoding,
+                    "filter_encoding": filter_encoding,
                     "feature_count": total_features,
                     "progress_callback": progress.set_downloaded_bytes,
                     "feature_progress_callback": feature_count_callback,
@@ -662,6 +733,11 @@ class ServiceLoaderDialog(QDialog):
                 parent=self,
             )
             if layer and layer.isValid():
+                if service_type == 'wfs' and layer.featureCount() == 0:
+                    QMessageBox.information(
+                        self, "Sem resultados",
+                        "Nenhuma feição foi encontrada para os filtros e limites informados.")
+                    return
                 QgsProject.instance().addMapLayer(layer)
                 QMessageBox.information(self, "Sucesso", f"Camada {layer_name} adicionada")
             else:

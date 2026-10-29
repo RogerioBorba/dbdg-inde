@@ -3,7 +3,7 @@
 name=IndeServicosBR
 qgisMinimumVersion=3.0
 description=Plugin para acesso aos geoserviços da INDE Brasil/Plugin for accessing INDE Brasil's geospatial services.
-version=0.9.0
+version=1.0.0
 qgisMaximumVersion=4.99
 author=Rogério Borba
 email=dbdg@inde.gov.br
@@ -20,7 +20,8 @@ icon=icon.png
 
 experimental=False
 deprecated=False
-changelog=0.9.0: corrige 40 incompatibilidades com Qt6, incluindo enums com escopo e substituicao de exec_ por exec. Mantem as correcoes de seguranca da versao 0.8.
+changelog=1.0.0: limpa o formulário ao reabrir o filtro por atributo e impede a adição de camadas WFS sem feições; adiciona desenho de BBOX no mapa e filtro espacial avançado para WFS; inclui filtro por atributo com descoberta de campos e tipos via DescribeFeatureType, validação de valores e operador IN para listas de textos; combina filtros por atributo e espaciais na contagem e no download, preservando paginação e limite de feições; adiciona empacotador ZIP que exclui Git e caches para evitar falhas de instalação no Windows.
+    0.9.0: corrige 40 incompatibilidades com Qt6, incluindo enums com escopo e substituicao de exec_ por exec. Mantem as correcoes de seguranca da versao 0.8.
 
 [version]
 qgis=3.0

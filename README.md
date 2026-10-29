@@ -43,6 +43,27 @@ Como o plugin é uma versão estável, não é necessário habilitar a opção d
 4. Escolha ou filtre a camada 
 5. Clique no botão Adicionar camada ao projeto
 
+### Filtro por atributo WFS
+
+Na aba WFS, selecione uma camada e clique em **Filtrar por atributo**. O plugin
+consulta `DescribeFeatureType` para listar campos de texto e numéricos. Escolha
+um campo, um operador e um valor, por exemplo **nome contém Brasília** ou
+**população maior que 100000**. Use números sem separador de milhares; valores
+decimais aceitam ponto ou vírgula.
+
+A condição é enviada ao servidor e combinada com BBOX ou filtro espacial
+avançado usando **E**, tanto na contagem quanto no download. O limite de
+quantidade continua funcionando. A condição aplicada fica vinculada à camada durante a
+sessão. Ao reabrir o filtro por atributo, o formulário começa limpo para uma
+nova condição; cancelar mantém o filtro aplicado anteriormente. Use
+**Limpar atributo** para removê-lo. Quando não houver feições para os filtros e
+limites informados, o plugin avisa e não adiciona uma camada vazia ao projeto.
+Para selecionar vários textos, escolha **IN (na lista)** e informe, por exemplo,
+'RJ', 'ES', 'MG'. A comparação é exata; basta um dos valores corresponder ao atributo.
+
+Esta versão oferece uma condição e depende dos tipos simples informados pelo
+serviço; esquemas com tipos personalizados ou importados podem não listar campos.
+
 
 ## Requisitos
 
@@ -78,3 +99,12 @@ Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICE
 ## Disclaimer
 
 Este repositório, dbdg-inde, é disponibilizado sem garantias de qualquer natureza, expressas ou implícitas. O conteúdo, código-fonte, documentação e quaisquer outros materiais aqui presentes são fornecidos "como estão", sem responsabilidade por parte do autor ou colaboradores por eventuais danos, perdas ou problemas decorrentes do seu uso.
+
+
+## Gerar ZIP para instalar no QGIS
+
+Execute `python tools/package_plugin.py` na pasta do projeto. O arquivo gerado é
+`dist/dbdg_inde.zip`, pronto para **Instalar a partir de ZIP** no QGIS.
+O pacote inclui os módulos do plugin, bibliotecas locais e certificados,
+sem `.git`, testes ou caches. Compactar a pasta inteira pode incluir caminhos
+muito longos do histórico Git e interromper a extração no Windows.

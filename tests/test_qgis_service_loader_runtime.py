@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 
 try:
@@ -106,6 +107,123 @@ class ServiceLoaderQgisRuntimeTest(unittest.TestCase):
         self.assertEqual(self.dialog.layer_list.count(), 0)
         self.assertFalse(self.dialog.load_button.isEnabled())
         self.assertFalse(self.dialog.metadata_button.isEnabled())
+
+    def test_attribute_dialog_and_layer_scoping(self):
+        from ..wfs_filter_dialogs import AttributeFilterDialog
+        dialog = AttributeFilterDialog([('nome', 'text'), ('pop', 'integer')])
+        dialog.operator_combo.setCurrentIndex(dialog.operator_combo.findData('contains'))
+        dialog.value_input.setText('Brasília')
+        self.assertIn('PropertyIsLike', dialog.filter_text())
+        dialog.operator_combo.setCurrentIndex(dialog.operator_combo.findData('in'))
+        dialog.value_input.setText("'RJ', 'ES', 'MG'")
+        self.assertIn('Or', dialog.filter_text())
+        self.assertIn("'RJ'", dialog.value_input.placeholderText())
+        dialog.field_combo.setCurrentIndex(1)
+        self.assertEqual(dialog.operator_combo.findData('contains'), -1)
+        self.assertEqual(dialog.operator_combo.findData('in'), -1)
+        dialog.value_input.setText('100000')
+        dialog.operator_combo.setCurrentIndex(dialog.operator_combo.findData('gt'))
+        self.assertIn('PropertyIsGreaterThan', dialog.filter_text())
+        dialog.close()
+        self._select_service('wfs')
+        self.dialog.layer_list.setCurrentRow(0)
+        key = self.dialog._attribute_key()
+        self.dialog.wfs_attribute_filters[key] = (('pop', 'gt', '100000'), dialog.filter_text())
+        self.dialog._update_wfs_filter_buttons()
+        self.assertTrue(self.dialog.wfs_attribute_clear_button.isEnabled())
+        self.dialog.clear_attribute_filter()
+        self.assertFalse(self.dialog.wfs_attribute_clear_button.isEnabled())
+
+    def test_attribute_bbox_count_and_download_share_filter(self):
+        from ..wfs_attribute_filter import attribute_filter
+        from .. import service_loader_dialog
+        from xml.etree import ElementTree as ET
+        self._select_service('wfs')
+        self.dialog.layer_list.setCurrentRow(0)
+        key = self.dialog._attribute_key()
+        self.dialog.wfs_attribute_filters[key] = (
+            ('pop', 'gt', '100000'), attribute_filter('pop', 'integer', 'gt', '100000'))
+        self.dialog.wfs_bbox_input.setText('-48,-16,-46,-14,EPSG:4326')
+        self.dialog.wfs_count_input.setText('10')
+        received = {}
+        class Handler:
+            def get_geometry_property(self, *args):
+                return 'geom'
+            def get_feature_count(self, **kwargs):
+                received['count'] = kwargs
+                return 1
+            def create_layer(self, **kwargs):
+                received['download'] = kwargs['options']
+                return None
+        self.dialog.handlers['wfs'] = Handler()
+        with patch.object(service_loader_dialog.QMessageBox, 'warning'):
+            self.dialog.add_layer()
+        self.assertEqual(received['count']['filter_encoding'], received['download']['filter_encoding'])
+        self.assertIsNone(received['download']['bbox'])
+        self.assertEqual(received['download']['count'], 10)
+        root = ET.fromstring(received['download']['filter_encoding'])
+        self.assertTrue(root[0].tag.endswith('And'))
+
+    def test_reopening_attribute_form_starts_blank_and_cancel_preserves_filter(self):
+        from .. import service_loader_dialog
+        from ..wfs_filter_dialogs import AttributeFilterDialog
+        from unittest.mock import Mock
+        self._select_service('wfs')
+        self.dialog.layer_list.setCurrentRow(0)
+        key = self.dialog._attribute_key()
+        saved = (('nome', 'in', "'RJ', 'MG'"), '<saved/>')
+        self.dialog.wfs_attribute_filters[key] = saved
+        self.dialog.handlers['wfs'].get_attribute_fields = Mock(return_value=[('nome', 'text')])
+        opened = []
+        class InspectDialog(AttributeFilterDialog):
+            def exec(self):
+                opened.append((self.operator_combo.currentData(), self.value_input.text()))
+                return self.DialogCode.Rejected
+        with patch.object(service_loader_dialog, 'AttributeFilterDialog', InspectDialog):
+            self.dialog.open_attribute_filter()
+        self.assertEqual(opened, [('eq', '')])
+        self.assertEqual(self.dialog.wfs_attribute_filters[key], saved)
+
+    def test_zero_matches_skips_download_and_layer_addition(self):
+        from .. import service_loader_dialog
+        from qgis.core import QgsProject
+        from unittest.mock import Mock
+        self._select_service('wfs')
+        self.dialog.layer_list.setCurrentRow(0)
+        handler = Mock()
+        handler.get_feature_count.return_value = 0
+        self.dialog.handlers['wfs'] = handler
+        before = set(QgsProject.instance().mapLayers())
+        with patch.object(service_loader_dialog.QMessageBox, 'information') as notice, \
+                patch.object(service_loader_dialog.QMessageBox, 'critical'):
+            self.dialog.add_layer()
+        handler.create_layer.assert_not_called()
+        self.assertEqual(set(QgsProject.instance().mapLayers()), before)
+        self.assertIn('Nenhuma', notice.call_args.args[2])
+
+    def test_downloaded_empty_layer_is_not_added_even_with_explicit_limit(self):
+        from .. import service_loader_dialog
+        from qgis.core import QgsProject, QgsVectorLayer
+        from unittest.mock import Mock
+        self._select_service('wfs')
+        self.dialog.layer_list.setCurrentRow(0)
+        self.dialog.wfs_startindex_input.setText('0')
+        self.dialog.wfs_count_input.setText('10')
+        empty = QgsVectorLayer('Point?crs=EPSG:4326', 'vazia', 'memory')
+        self.assertTrue(empty.isValid())
+        handler = Mock()
+        handler.create_layer.return_value = empty
+        self.dialog.handlers['wfs'] = handler
+        before = set(QgsProject.instance().mapLayers())
+        with patch.object(service_loader_dialog.QMessageBox, 'information') as notice, \
+                patch.object(service_loader_dialog.QMessageBox, 'critical'):
+            self.dialog.add_layer()
+        try:
+            self.assertEqual(set(QgsProject.instance().mapLayers()), before)
+            self.assertIn('Nenhuma', notice.call_args.args[2])
+        finally:
+            QgsProject.instance().removeMapLayer(empty.id())
+
 
 
 if __name__ == "__main__":

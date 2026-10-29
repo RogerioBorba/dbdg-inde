@@ -30,6 +30,68 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgsMapCanvas, QgsMapTool, QgsRubberBand
+from .wfs_attribute_filter import attribute_filter, TEXT_OPERATORS, NUMBER_OPERATORS
+
+
+class AttributeFilterDialog(QDialog):
+    """Edit one typed attribute condition."""
+
+    def __init__(self, fields, initial=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Filtro por atributo')
+        self.resize(460, 180)
+        self.field_combo = QComboBox()
+        for name, kind in fields:
+            self.field_combo.addItem(name, kind)
+        self.operator_combo = QComboBox()
+        self.value_input = QLineEdit()
+        self.operator_combo.currentIndexChanged.connect(self._update_value_hint)
+        self.value_input.setPlaceholderText('Ex.: Brasília ou 100000 (sem separador de milhares)')
+        self.field_combo.currentIndexChanged.connect(self._update_operators)
+        self._update_operators()
+        if initial:
+            field, operator, value = initial
+            self.field_combo.setCurrentIndex(max(0, self.field_combo.findText(field)))
+            self.operator_combo.setCurrentIndex(max(0, self.operator_combo.findData(operator)))
+            self.value_input.setText(value)
+        form = QFormLayout()
+        form.addRow('Campo:', self.field_combo)
+        form.addRow('Operador:', self.operator_combo)
+        form.addRow('Valor:', self.value_input)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def _update_operators(self):
+        self.operator_combo.clear()
+        for label, code in (TEXT_OPERATORS if self.field_combo.currentData() == 'text' else NUMBER_OPERATORS):
+            self.operator_combo.addItem(label, code)
+
+    def condition(self):
+        return (self.field_combo.currentText(), self.operator_combo.currentData(), self.value_input.text())
+
+    def _update_value_hint(self):
+        is_in = self.operator_combo.currentData() == 'in'
+        self.value_input.setPlaceholderText(
+            "Ex.: 'RJ', 'ES', 'MG'" if is_in else 'Ex.: Brasília ou 100000 (sem separador de milhares)')
+        self.value_input.setToolTip(
+            "Separe os valores por vírgulas. Use aspas para valores com vírgulas; "
+            "duplique apóstrofos internos: 'D''Ávila'." if is_in else '')
+
+    def filter_text(self):
+        field, operator, value = self.condition()
+        return attribute_filter(field, self.field_combo.currentData(), operator, value)
+
+    def _accept_if_valid(self):
+        try:
+            self.filter_text()
+        except ValueError as error:
+            QMessageBox.warning(self, 'Filtro por atributo', str(error))
+            return
+        self.accept()
 
 
 class RectangleMapTool(QgsMapTool):

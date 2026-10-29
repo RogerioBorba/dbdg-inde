@@ -155,6 +155,42 @@ class WfsServiceHandler(ServiceHandler):
         with urlopen(request_url, context=context, timeout=timeout) as response:
             return self._parse_geometry_property(response.read())
 
+    def get_attribute_fields(self, entry, layer_name, timeout=30):
+        params = dict(service='WFS', version='2.0.0', request='DescribeFeatureType', typeNames=layer_name)
+        with urlopen(self._build_url(entry['url'], params),
+                     context=create_ssl_context(), timeout=timeout) as response:
+            return self._parse_attribute_fields(response.read(), layer_name)
+
+    @staticmethod
+    def _parse_attribute_fields(xml_data, layer_name=None):
+        root = parse_xml_safe(xml_data)
+        xsd = '{http://www.w3.org/2001/XMLSchema}'
+        if layer_name:
+            local_name = layer_name.split(':')[-1]
+            declared_type = None
+            for element in root.findall(xsd + 'element'):
+                if element.get('name') == local_name:
+                    declared_type = (element.get('type') or '').split(':')[-1]
+                    break
+            complex_types = root.findall(xsd + 'complexType')
+            matching = [node for node in complex_types
+                        if node.get('name') == (declared_type or local_name + 'Type')]
+            if matching:
+                root = matching[0]
+            elif len(complex_types) > 1:
+                return []
+        integers = {'integer', 'int', 'long', 'short', 'byte', 'nonNegativeInteger',
+                    'positiveInteger', 'negativeInteger', 'nonPositiveInteger',
+                    'unsignedInt', 'unsignedLong', 'unsignedShort', 'unsignedByte'}
+        fields = []
+        for element in root.findall('.//{http://www.w3.org/2001/XMLSchema}sequence/{http://www.w3.org/2001/XMLSchema}element'):
+            name = element.get('name')
+            kind = (element.get('type') or '').split(':')[-1]
+            if name and kind in integers | {'decimal', 'double', 'float', 'string', 'normalizedString', 'token'}:
+                fields.append((name, 'integer' if kind in integers else
+                               'text' if kind in {'string', 'normalizedString', 'token'} else 'number'))
+        return fields
+
     @staticmethod
     def _parse_geometry_property(xml_data):
         try:
